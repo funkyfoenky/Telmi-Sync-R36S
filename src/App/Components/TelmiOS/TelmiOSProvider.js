@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useElectronEmitter, useElectronListener } from '../Electron/Hooks/UseElectronEvent.js'
-import TelmiOSContext from './TelmiOSContext.js'
+import { useTelmiSyncParams } from '../TelmiSyncParams/TelmiSyncParamsHooks.js'
 import { useModal } from '../Modal/ModalHooks.js'
+import { useLocale } from '../Locale/LocaleHooks.js'
 import ModalElectronTaskVisualizer from '../Electron/Modal/ModalElectronTaskVisualizer.js'
+import ModalDialogAlert from '../Modal/Templates/ModalDialogs/ModalDialogAlert.js'
+import TelmiOSContext from './TelmiOSContext.js'
+
+const {ipcRenderer} = window.require('electron')
 
 const telmiOSToString = (telmiOS) => {
   return telmiOS === null ?
@@ -12,12 +17,20 @@ const telmiOSToString = (telmiOS) => {
 
 function TelmiOSProvider ({children}) {
   const
+    {params} = useTelmiSyncParams(),
+    {getLocale} = useLocale(),
     [telmiOS, setTelmiOS] = useState(null),
     [diskusage, setDiskusage] = useState(null),
     [stories, setStories] = useState([]),
     [music, setMusic] = useState([]),
+    [games, setGames] = useState([]),
     {addModal, rmModal} = useModal(),
-    data = useMemo(() => ({...telmiOS, diskusage, stories, music}), [telmiOS, diskusage, stories, music])
+    deviceMode = params !== null ? (params.deviceMode || 'miyoo') : null,
+    isR36s = deviceMode === 'r36s',
+    isSwitch = deviceMode === 'switch',
+    prevTelmiKeyRef = useRef(''),
+    prevModeRef = useRef(null),
+    data = useMemo(() => ({...telmiOS, diskusage, stories, music, games}), [telmiOS, diskusage, stories, music, games])
 
   useElectronListener(
     'telmios-data',
@@ -28,6 +41,7 @@ function TelmiOSProvider ({children}) {
           setDiskusage(null)
           setStories([])
           setMusic([])
+          setGames([])
         }
       }
     },
@@ -39,17 +53,46 @@ function TelmiOSProvider ({children}) {
 
   useEffect(
     () => {
-      if (telmiOS !== null) {
-        addModal((key) => {
-          const modal = <ModalElectronTaskVisualizer key={key}
-                                                     taskName="telmios-update"
-                                                     dataSent={[telmiOS]}
-                                                     onClose={() => rmModal(modal)}/>
-          return modal
-        })
+      const key = telmiOSToString(telmiOS)
+      const keyChanged = key !== prevTelmiKeyRef.current
+      const modeChanged = deviceMode !== prevModeRef.current
+      prevTelmiKeyRef.current = key
+      prevModeRef.current = deviceMode
+
+      if (telmiOS === null || params === null || isSwitch || (!keyChanged && !modeChanged)) {
+        return
       }
+
+      // R36S : check silencieuse (popup si outdated via telmios-update-outdated)
+      if (isR36s) {
+        ipcRenderer.send('telmios-update', telmiOS)
+        return
+      }
+
+      // Miyoo : mise à jour Onion automatique
+      addModal((k) => {
+        const modal = <ModalElectronTaskVisualizer key={k}
+                                                   taskName="telmios-update"
+                                                   dataSent={[telmiOS]}
+                                                   onClose={() => rmModal(modal)}/>
+        return modal
+      })
     },
-    [telmiOS, addModal, rmModal]
+    [telmiOS, params, deviceMode, isR36s, isSwitch, addModal, rmModal]
+  )
+
+  useElectronListener(
+    'telmios-update-outdated',
+    () => {
+      addModal((key) => {
+        const modal = <ModalDialogAlert key={key}
+                                        title={getLocale('telmios-outdated-title')}
+                                        message={getLocale('telmios-outdated')}
+                                        onClose={() => rmModal(modal)}/>
+        return modal
+      })
+    },
+    [addModal, rmModal, getLocale]
   )
 
   useElectronListener('telmios-stories-data', (telmiOSStories) => setStories(telmiOSStories), [setStories])
@@ -57,6 +100,19 @@ function TelmiOSProvider ({children}) {
 
   useElectronListener('telmios-musics-data', (telmiOSMusics) => setMusic(telmiOSMusics), [setMusic])
   useElectronEmitter('telmios-musics-get', [telmiOS])
+
+  useElectronListener('telmios-games-data', (telmiOSGames) => setGames(telmiOSGames), [setGames])
+  // Jeux appareil : uniquement en mode R36S (évite de créer Games/ sur Miyoo)
+  useEffect(
+    () => {
+      if (!isR36s || telmiOS === null) {
+        setGames([])
+        return
+      }
+      ipcRenderer.send('telmios-games-get', telmiOS)
+    },
+    [isR36s, telmiOS]
+  )
 
   return <TelmiOSContext.Provider value={data}>{children}</TelmiOSContext.Provider>
 }

@@ -6,7 +6,7 @@ import * as path from 'path'
 import { initTmpPath } from '../Helpers/AppPaths.js'
 import { unpack } from '../BinFiles/7zipCommands.js'
 
-async function main (drive) {
+async function main (drive, checkOnly = false) {
   process.stdout.write('*initialize*0*1*')
 
   const telmiOS = parseTelmiOSAutorun(drive)
@@ -25,6 +25,11 @@ async function main (drive) {
 
   if (!isNewerVersion(telmiOS.version, lts.tag_name)) {
     return process.stdout.write('success')
+  }
+
+  // Mode R36S : detection seule, pas d'application automatique
+  if (checkOnly) {
+    return process.stderr.write('outdated')
   }
 
   for (const asset of lts.assets) {
@@ -63,5 +68,5 @@ const _params_ = getProcessParams()
 if (_params_.length === 0) {
   process.stderr.write('telmios-not-found')
 } else {
-  main(_params_[0]).catch((e) => process.stderr.write(e.toString()))
+  main(_params_[0], _params_[1] === 'check').catch((e) => process.stderr.write(e.toString()))
 }

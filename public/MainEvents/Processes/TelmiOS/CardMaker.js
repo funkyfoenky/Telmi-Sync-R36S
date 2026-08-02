@@ -5,6 +5,8 @@ import {getProcessParams} from '../Helpers/ProcessParams.js'
 import {getExtraResourcesPath, initTmpPath} from '../Helpers/AppPaths.js'
 import {downloadFile, requestJson} from '../../Helpers/Request.js'
 import {unpack} from '../BinFiles/7zipCommands.js'
+import {getTelmiSyncParams} from '../Helpers/TelmiSyncParams.js'
+import {main as mainR36s} from './CardMakerR36s.js'
 
 const
   getScriptPath = () => {
@@ -35,7 +37,7 @@ const
     }
   }
 
-async function main(drive) {
+async function mainMiyoo(drive) {
   process.stdout.write('*formatting*0*1*')
   sudo.exec(
     getCommand(drive),
@@ -87,6 +89,15 @@ async function main(drive) {
       process.stderr.write('telmios-download-error')
     }
   )
+}
+
+async function main(drive) {
+  const mode = getTelmiSyncParams().deviceMode
+  if (mode === 'r36s') {
+    mainR36s(drive)
+    return
+  }
+  await mainMiyoo(drive)
 }
 
 const _params_ = getProcessParams()

@@ -15,6 +15,11 @@
 /build
 /electron/dist
 
+# installer (publier via GitHub Releases)
+/release/*.exe
+/release/*.blockmap
+/release/*.exe.blockmap
+
 # misc
 .DS_Store
 .env.local

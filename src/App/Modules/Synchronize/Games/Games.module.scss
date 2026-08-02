@@ -1,0 +1,127 @@
+.wrapper {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.panels {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+}
+
+.toolbar {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  margin: 0 12px 4px;
+  flex: 0 0 auto;
+}
+
+.controlsHelp {
+  font-size: 13px;
+  margin-bottom: 12px;
+  opacity: 0.9;
+}
+
+.systemTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.systemTab,
+.systemTabActive {
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.25);
+  color: #eee;
+  border-radius: 16px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.systemTabActive {
+  background: #e67e22;
+  border-color: #e67e22;
+  color: #fff;
+}
+
+.mappingGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 16px;
+}
+
+.resetBtn {
+  margin-top: 14px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #ccc;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.resetBtn:hover {
+  border-color: #e67e22;
+  color: #fff;
+}
+
+.unlockList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.unlockRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.unlockIndex {
+  width: 1.5rem;
+  flex: 0 0 auto;
+  opacity: 0.8;
+}
+
+.unlockRemove {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: transparent;
+  color: #ccc;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.unlockRemove:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.unlockActions {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.unlockPreview {
+  margin-top: 12px;
+  font-size: 13px;
+  opacity: 0.9;
+}
+

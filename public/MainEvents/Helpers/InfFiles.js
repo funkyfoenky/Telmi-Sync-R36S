@@ -18,7 +18,60 @@ const
       )
   },
 
-  parseTelmiOSAutorun = (drive) => {
+  parseTelmiOSAutorun = (drive, switchMode = false) => {
+    // Switch mode: TelmiOS on console SD — folders switch/Telmi/Stories + switch/Telmi/Music (+ TelmiVersion.txt).
+    if (switchMode) {
+      const storiesDir = path.join(drive, 'switch', 'Telmi', 'Stories')
+      const musicDir = path.join(drive, 'switch', 'Telmi', 'Music')
+
+      if (fs.existsSync(storiesDir) && fs.existsSync(musicDir)) {
+        const versionFilePath = path.join(drive, 'switch', 'Telmi', 'TelmiVersion.txt')
+        let version = { major: 0, minor: 0, fix: 0 }
+
+        if (fs.existsSync(versionFilePath)) {
+          const raw = fs.readFileSync(versionFilePath).toString('utf8').trim()
+          const match = raw.match(/(\d+\.\d+\.\d+)/)
+          const parsed = versionStringToObject(match ? match[1] : raw)
+          if (parsed !== null) {
+            version = parsed
+          }
+        }
+
+        return {
+          label: 'TelmiOS',
+          version
+        }
+      }
+
+      // Hybrid SD: try legacy autorun if Switch folders are missing
+      const pathAutorunSwitch = path.join(drive, 'autorun.inf')
+      if (!fs.existsSync(pathAutorunSwitch)) {
+        return null
+      }
+
+      const autorunSw = parseInfFile(fs.readFileSync(pathAutorunSwitch).toString('utf8'))
+      if (autorunSw.label === undefined) {
+        return null
+      }
+
+      const labelSw = autorunSw.label
+      const telmi = 'TelmiOS'
+      const v = '-v'
+
+      if (labelSw.substring(0, telmi.length) === telmi) {
+        const versionSw = versionStringToObject(labelSw.substring(labelSw.lastIndexOf(v) + v.length))
+        if (versionSw !== null && versionSw.major >= 1) {
+          return {
+            label: telmi,
+            version: versionSw
+          }
+        }
+      }
+
+      return null
+    }
+
+    // Classic mode: legacy detection via autorun.inf only (original Telmi Sync behavior).
     const pathAutorun = path.join(drive, 'autorun.inf')
 
     if (!fs.existsSync(pathAutorun)) {

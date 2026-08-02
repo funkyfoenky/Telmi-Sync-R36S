@@ -6,6 +6,7 @@ import ModalLayoutPadded from '../../Components/Modal/ModalLayoutPadded.js'
 import ButtonsContainer from '../../Components/Buttons/ButtonsContainer.js'
 import ButtonIconTextCheck from '../../Components/Buttons/IconsTexts/ButtonIconTextCheck.js'
 import InputSelect from '../../Components/Form/Input/InputSelect.js'
+import InputText from '../../Components/Form/Input/InputText.js'
 import ModalTitle from '../../Components/Modal/ModalTitle.js'
 import ModalContent from '../../Components/Modal/ModalContent.js'
 import Form from '../../Components/Form/Form.js'
@@ -16,8 +17,11 @@ function ModalTelmiSyncParamsForm({onClose}) {
     {params, saveParams} = useTelmiSyncParams(),
     [audioDevices, setAudioDevices] = useState([]),
     [appVersion, setAppVersion] = useState(''),
+    [deviceMode, setDeviceMode] = useState(params?.deviceMode === 'r36s' ? 'r36s' : 'miyoo'),
     inputRef0 = useRef(),
-    inputRef1 = useRef()
+    inputRef1 = useRef(),
+    inputRef2 = useRef(),
+    inputRef3 = useRef()
 
   useEffect(
     () => {
@@ -44,6 +48,24 @@ function ModalTelmiSyncParamsForm({onClose}) {
       (validation) => {
         return <>
           <ModalContent>
+            <InputSelect label={getLocale('telmi-sync-device-mode')}
+                         key="telmi-sync-device-mode"
+                         id="telmi-sync-device-mode"
+                         defaultValue={deviceMode}
+                         options={[
+                           {value: 'miyoo', text: getLocale('telmi-sync-device-miyoo')},
+                           {value: 'r36s', text: getLocale('telmi-sync-device-r36s')},
+                         ]}
+                         onChange={(v) => setDeviceMode(v)}
+                         ref={inputRef2}/>
+            {deviceMode === 'r36s' ?
+              <InputText label={getLocale('telmi-sync-r36s-path')}
+                         key="telmi-sync-r36s-path"
+                         id="telmi-sync-r36s-path"
+                         defaultValue={params?.telmiR36Path || ''}
+                         placeholder={getLocale('telmi-sync-r36s-path-placeholder')}
+                         ref={inputRef3}/> :
+              null}
             <InputSelect label={getLocale('audio-microphone-select')}
                          key="audio-microphone-select"
                          id="audio-microphone-select"
@@ -64,17 +86,28 @@ function ModalTelmiSyncParamsForm({onClose}) {
             <ButtonIconTextCheck text={getLocale('save')}
                                  rounded={true}
                                  onClick={() => {
+                                   const refs = [inputRef0, inputRef1, inputRef2]
+                                   if (deviceMode === 'r36s') {
+                                     refs.push(inputRef3)
+                                   }
                                    validation(
-                                     [
-                                       inputRef0,
-                                       inputRef1,
-                                     ],
+                                     refs,
                                      (values) => {
                                        const piper = values[1].split('/')
-                                       saveParams(Object.assign(
-                                         {...params, piper: {voice: piper[0], speaker: piper[1]}},
-                                         values[0] !== undefined ? {microphone: values[0]} : null
-                                       ))
+                                       const mode = values[2] === 'r36s' ? 'r36s' : 'miyoo'
+                                       const next = {
+                                         ...params,
+                                         piper: {voice: piper[0], speaker: piper[1]},
+                                         deviceMode: mode,
+                                         switchMode: false,
+                                         telmiR36Path: mode === 'r36s' && values[3]
+                                           ? String(values[3]).trim() || null
+                                           : (params.telmiR36Path || null)
+                                       }
+                                       if (values[0] !== undefined) {
+                                         next.microphone = values[0]
+                                       }
+                                       saveParams(next)
                                        onClose()
                                      }
                                    )

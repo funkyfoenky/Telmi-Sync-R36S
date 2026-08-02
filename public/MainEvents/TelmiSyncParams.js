@@ -12,7 +12,8 @@ function mainEventTelmiSyncParams (mainWindow) {
     'telmi-sync-params-save',
     async (event, params) => {
       saveTelmiSyncParams(params)
-      mainWindow.webContents.send('telmi-sync-params', params)
+      mainWindow.webContents.send('telmi-sync-params', getTelmiSyncParams())
+      ipcMain.emit('telmi-sync-recheck-telmios')
     }
   )
 }

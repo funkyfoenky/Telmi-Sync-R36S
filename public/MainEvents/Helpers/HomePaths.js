@@ -9,6 +9,7 @@ function homePaths(homeLongPath) {
     STORES_PATH = path.join(homePath, '.telmi', 'stores'),
     STORIES_PATH = path.join(homePath, '.telmi', 'stories'),
     MUSIC_PATH = path.join(homePath, '.telmi', 'music'),
+    GAMES_PATH = path.join(homePath, '.telmi', 'games'),
     BIN_PATH = path.join(homePath, '.telmi', 'bin'),
     PARAMETERS_PATH = path.join(homePath, '.telmi', 'parameters')
 
@@ -16,6 +17,10 @@ function homePaths(homeLongPath) {
     initAppPaths: () => {
       createPathDirectories(STORIES_PATH)
       createPathDirectories(MUSIC_PATH)
+      createPathDirectories(GAMES_PATH)
+      ;['gb', 'gbc', 'gba', 'nes', 'md', 'snes', 'psx'].forEach((sys) => {
+        createPathDirectories(path.join(GAMES_PATH, sys))
+      })
     },
 
     initTmpPath: (dirName) => {
@@ -35,6 +40,10 @@ function homePaths(homeLongPath) {
 
     getMusicPath: (fileAudio) => {
       return fileAudio === undefined ? MUSIC_PATH : path.join(MUSIC_PATH, fileAudio)
+    },
+
+    getGamesPath: (filePath) => {
+      return filePath === undefined ? GAMES_PATH : path.join(GAMES_PATH, filePath)
     },
 
     getBinPath: (filePath) => {

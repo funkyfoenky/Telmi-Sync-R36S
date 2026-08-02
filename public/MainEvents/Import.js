@@ -14,6 +14,7 @@ function mainEventImport(mainWindow) {
       mainWindow.webContents.send('import-task', '', '', 0, 0)
       ipcMain.emit('local-stories-get')
       ipcMain.emit('local-musics-get')
+      ipcMain.emit('local-games-get')
       return
     }
     const file = filesToProcess.shift()

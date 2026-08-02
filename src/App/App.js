@@ -3,6 +3,7 @@ import ModalProvider from './Components/Modal/ModalProvider.js'
 import RouterProvider from './Router/RouterProvider.js'
 import LocalStoriesProvider from './Components/LocalStories/LocalStoriesProvider.js'
 import LocalMusicProvider from './Components/LocalMusic/LocalMusicProvider.js'
+import LocalGamesProvider from './Components/LocalGames/LocalGamesProvider.js'
 import LocaleProvider from './Components/Locale/LocaleProvider.js'
 import TelmiOSProvider from './Components/TelmiOS/TelmiOSProvider.js'
 import TelmiSyncParamsProvider from './Components/TelmiSyncParams/TelmiSyncParamsProvider.js'
@@ -17,7 +18,9 @@ function App() {
         <TelmiOSProvider>
           <LocalStoriesProvider>
             <LocalMusicProvider>
-              <RouterProvider defaultRoute={routeDownloadFFmpeg}/>
+              <LocalGamesProvider>
+                <RouterProvider defaultRoute={routeDownloadFFmpeg}/>
+              </LocalGamesProvider>
             </LocalMusicProvider>
           </LocalStoriesProvider>
         </TelmiOSProvider>

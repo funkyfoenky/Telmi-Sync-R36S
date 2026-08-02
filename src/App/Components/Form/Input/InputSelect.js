@@ -28,7 +28,16 @@ function InputSelect({label, id, required, className, classNameInput, options, v
       [ref, getLocale, label, options]
     ),
     onChangeCallback = useCallback(
-      (e) => typeof onChange === 'function' && onChange(e.target.getValue()),
+      (e) => {
+        if (typeof onChange !== 'function') {
+          return
+        }
+        if (typeof e.target.getValue === 'function') {
+          onChange(e.target.getValue())
+        } else {
+          onChange(e.target.value)
+        }
+      },
       [onChange]
     )
 

@@ -1,11 +1,37 @@
-![Total Download](https://img.shields.io/github/downloads/DantSu/Telmi-Sync/total.svg) [![v0.17.0 download](https://img.shields.io/github/downloads/DantSu/Telmi-Sync/0.17.0/total.svg)](https://github.com/DantSu/Telmi-Sync/releases/tag/0.17.0)
+# Telmi Sync for R36S
 
-<p align="center"><img = src="https://dantsu.com/files/Telmi_MiyooPC.jpg" alt="Telmi OS - Telmi Sync" /></p>
+Application de bureau (Electron) pour synchroniser histoires, musique et jeux avec **TelmiOS** sur **R36S** (et Miyoo).
 
-# Telmi Sync - Synchronize your stories and music with Telmi OS
+Fork de [Telmi Sync](https://github.com/LeGoffMael/Telmi-Sync) avec :
 
-This application is for installing Telmi OS and synchronized stories and music with Telmi OS.
+- Mode plateforme **Miyoo** / **R36S**
+- Onglet **Jeux** (R36S) : ROMs, jaquettes, contrôles émulation, combo menu caché
+- CardMaker R36S : flash GPT (BOOT / root / TELMI) via `flash-telmi-sd.ps1`
 
-You can install Telmi Sync on Windows 10+ (x64), MacOS (x64, arm64), Linux (x64).
+## Prérequis
 
-[Learn more about Telmi](https://telmi.fr)
+- Node.js 18+
+- Windows (CardMaker R36S et flash SD)
+
+## Développement
+
+```bash
+npm install
+npm start
+```
+
+## Build installateur Windows
+
+```bash
+npm run build
+```
+
+Sortie : `electron/dist/Telmi Sync Setup <version>.exe`
+
+## Release fournie
+
+Voir le dossier `release/` (à publier en **GitHub Release**, pas à committer dans git).
+
+## Licence
+
+Voir `LICENSE`.
