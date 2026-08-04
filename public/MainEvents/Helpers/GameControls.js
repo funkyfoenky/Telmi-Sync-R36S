@@ -58,12 +58,12 @@ const identityMap = () => {
   return m
 }
 
-/** Defaults : GB/GBC A/B inverses (comme Peanut actuel) */
+/** Defaults : A/B = boutons physiques R36S (A bas, B droite), sans swap */
 const DEFAULT_CONTROLS = {
   default: identityMap(),
   systems: {
-    gb: {...identityMap(), A: 'B', B: 'A', X: 'null', Y: 'null', L1: 'null', R1: 'null', L2: 'null', R2: 'null'},
-    gbc: {...identityMap(), A: 'B', B: 'A', X: 'null', Y: 'null', L1: 'null', R1: 'null', L2: 'null', R2: 'null'},
+    gb: {...identityMap(), X: 'null', Y: 'null', L1: 'null', R1: 'null', L2: 'null', R2: 'null'},
+    gbc: {...identityMap(), X: 'null', Y: 'null', L1: 'null', R1: 'null', L2: 'null', R2: 'null'},
     gba: {...identityMap(), X: 'null', Y: 'null'},
     nes: {...identityMap(), X: 'null', Y: 'null', L1: 'null', R1: 'null', L2: 'null', R2: 'null'},
     md: identityMap(),

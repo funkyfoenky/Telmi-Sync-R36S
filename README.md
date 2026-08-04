@@ -7,6 +7,7 @@ Fork de [Telmi Sync](https://github.com/LeGoffMael/Telmi-Sync) avec :
 - Mode plateforme **Miyoo** / **R36S**
 - Onglet **Jeux** (R36S) : ROMs, jaquettes, contrôles émulation, combo menu caché
 - CardMaker R36S : flash GPT (BOOT / root / TELMI) via `flash-telmi-sd.ps1`
+- Mapping boutons aligné silkscreen R36S (A = bas, B = droite)
 
 ## Prérequis
 
