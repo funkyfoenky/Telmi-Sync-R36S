@@ -94,7 +94,7 @@ async function mainMiyoo(drive) {
 async function main(drive) {
   const mode = getTelmiSyncParams().deviceMode
   if (mode === 'r36s') {
-    mainR36s(drive)
+    mainR36s(drive).catch((e) => process.stderr.write((e && e.toString()) || 'r36s-flash-failed'))
     return
   }
   await mainMiyoo(drive)

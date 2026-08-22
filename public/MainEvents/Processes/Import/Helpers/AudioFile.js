@@ -2,6 +2,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import {convertAudioToMp3} from '../../BinFiles/FFmpegCommand.js'
 import {findFile} from '../../../Helpers/Files.js'
+import {runConcurrentPool} from '../../Helpers/ConcurrencyPool.js'
 
 const
   isAudioFile = (fileName) => {
@@ -20,15 +21,21 @@ const
       return
     }
 
-    const
-      srcAudio = srcAudios.shift(),
-      dstAudio = dstAudios.shift()
+    runConcurrentPool(
+      (callback) => {
+        if (!srcAudios.length) {
+          return false
+        }
+        const
+          srcAudio = srcAudios.shift(),
+          dstAudio = dstAudios.shift()
 
-    process.stdout.write('*converting-audio*' + index + '*' + length + '*')
+        process.stdout.write('*converting-audio*' + (index++) + '*' + length + '*')
 
-    convertAudio(srcAudio, dstAudio, forceConverting, forceVolume)
-      .then(() => convertAudios(srcAudios, dstAudios, index + 1, length, onEnd, forceConverting, forceVolume))
-      .catch(() => convertAudios(srcAudios, dstAudios, index + 1, length, onEnd, forceConverting, forceVolume))
+        convertAudio(srcAudio, dstAudio, forceConverting, forceVolume).finally(callback)
+        return true
+      }
+    ).finally(() => onEnd(index))
   },
 
   checkCoverExists = (artist, album, coverPath) => {

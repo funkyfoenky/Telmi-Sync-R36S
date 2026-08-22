@@ -1,9 +1,7 @@
-import electron from 'electron'
+import { app } from 'electron'
 import homePaths from './HomePaths.js'
 import path from 'path'
 import {getShortPath} from './Paths.js'
-
-const {app} = electron
 
 const
   appPathRaw = app.getAppPath(),

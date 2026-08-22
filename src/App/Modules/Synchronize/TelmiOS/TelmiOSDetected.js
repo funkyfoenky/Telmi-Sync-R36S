@@ -1,10 +1,13 @@
 import { useCallback } from 'react'
 import { useLocale } from '../../../Components/Locale/LocaleHooks.js'
 import { useModal } from '../../../Components/Modal/ModalHooks.js'
+import { useTelmiSyncParams } from '../../../Components/TelmiSyncParams/TelmiSyncParamsHooks.js'
 import ButtonIconAnglesLeft from '../../../Components/Buttons/Icons/ButtonIconAnglesLeft.js'
 import ButtonIconGear from '../../../Components/Buttons/Icons/ButtonIconGear.js'
 import ButtonIconEject from '../../../Components/Buttons/Icons/ButtonIconEject.js'
+import ButtonIconMicrochip from '../../../Components/Buttons/Icons/ButtonIconMicrochip.js'
 import ModalTelmiOSParamsForm from './ModalTelmiOSParamsForm.js'
+import ModalTelmiOSRevForm from './ModalTelmiOSRevForm.js'
 
 import styles from '../Synchronize.module.scss'
 import ModalTelmiOSEject from './ModalTelmiOSEject.js'
@@ -17,6 +20,8 @@ function TelmiOSDetected ({telmiOS, onTransfer, children}) {
   const
     {getLocale} = useLocale(),
     {addModal, rmModal} = useModal(),
+    {params} = useTelmiSyncParams(),
+    isR36s = params && params.deviceMode === 'r36s',
     onTelmiOSParams = useCallback(
       () => {
         addModal(
@@ -28,6 +33,19 @@ function TelmiOSDetected ({telmiOS, onTransfer, children}) {
                                                     ipcRenderer.send('telmios-save-parameters', telmiOS)
                                                   }}
                                                   onClose={() => rmModal(modal)}/>
+            return modal
+          }
+        )
+      },
+      [telmiOS, addModal, rmModal]
+    ),
+    onTelmiOSRev = useCallback(
+      () => {
+        addModal(
+          (key) => {
+            const modal = <ModalTelmiOSRevForm key={key}
+                                               telmiOS={telmiOS}
+                                               onClose={() => rmModal(modal)}/>
             return modal
           }
         )
@@ -61,6 +79,12 @@ function TelmiOSDetected ({telmiOS, onTransfer, children}) {
           }
         </span>
         <span className={styles.telmiOSTitleIcons}>
+            {
+              isR36s &&
+              <ButtonIconMicrochip className={styles.telmiOSTitleIcon}
+                                   title={getLocale('telmios-rev')}
+                                   onClick={onTelmiOSRev}/>
+            }
             <ButtonIconGear className={styles.telmiOSTitleIcon}
                             title={getLocale('telmios-parameters')}
                             onClick={onTelmiOSParams}/>

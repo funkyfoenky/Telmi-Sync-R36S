@@ -1,11 +1,19 @@
 import {ipcMain} from 'electron'
 import * as drivelist from 'drivelist'
-import checkDiskSpace from 'check-disk-space'
 import {parseTelmiOSAutorun} from './Helpers/InfFiles.js'
 import {readTelmiOSParameters, saveTelmiOSParameters} from './Helpers/TelmiOS.js'
 import {isSwitchMode, isR36sMode} from './Helpers/DeviceMode.js'
+import {getTelmiRevCatalog, applyTelmiRev} from './Helpers/TelmiOSRev.js'
 import runProcess from './Processes/RunProcess.js'
 import * as path from 'path'
+import * as fs from 'fs'
+
+// Replaces the `diskusage` native module: fs.statfs ships with Node since 18.15
+// and returns the same figures, with nothing to compile against the ABI.
+function checkDiskUsage(drive) {
+  const {bsize, blocks, bfree, bavail} = fs.statfsSync(drive)
+  return {total: blocks * bsize, free: bfree * bsize, available: bavail * bsize}
+}
 
 function mainEventTelmiOS(mainWindow) {
   const checkUsbDevices = async () => {
@@ -49,8 +57,7 @@ function mainEventTelmiOS(mainWindow) {
         return mainWindow.webContents.send('telmios-diskusage-data', null)
       }
       try {
-        const { free, size } = await checkDiskSpace(telmiDevice.drive)
-        return mainWindow.webContents.send('telmios-diskusage-data', { available: free, free, total: size })
+        return mainWindow.webContents.send('telmios-diskusage-data', checkDiskUsage(telmiDevice.drive))
       } catch (e) {
         return mainWindow.webContents.send('telmios-diskusage-data', null)
       }
@@ -165,6 +172,43 @@ function mainEventTelmiOS(mainWindow) {
           checkUsbDevices()
         }
       )
+    }
+  )
+
+  ipcMain.on(
+    'telmios-rev-get',
+    async (event, telmiDevice) => {
+      if (!telmiDevice || !telmiDevice.drive) {
+        mainWindow.webContents.send('telmios-rev-data', {error: 'telmios-not-found'})
+        return
+      }
+      try {
+        const data = await getTelmiRevCatalog(telmiDevice.drive)
+        mainWindow.webContents.send('telmios-rev-data', data)
+      } catch (e) {
+        mainWindow.webContents.send('telmios-rev-data', {error: 'r36s-revs-invalid'})
+      }
+    }
+  )
+
+  ipcMain.on(
+    'telmios-rev-apply',
+    async (event, telmiDevice, revId) => {
+      if (!telmiDevice || !telmiDevice.drive || !revId) {
+        mainWindow.webContents.send('telmios-rev-apply-result', {ok: false, error: 'r36s-rev-invalid'})
+        return
+      }
+      try {
+        const catalog = await getTelmiRevCatalog(telmiDevice.drive)
+        if (catalog.error) {
+          mainWindow.webContents.send('telmios-rev-apply-result', {ok: false, error: catalog.error})
+          return
+        }
+        const result = applyTelmiRev(catalog.bootRoot, revId)
+        mainWindow.webContents.send('telmios-rev-apply-result', result)
+      } catch (e) {
+        mainWindow.webContents.send('telmios-rev-apply-result', {ok: false, error: 'r36s-rev-apply-failed'})
+      }
     }
   )
 }

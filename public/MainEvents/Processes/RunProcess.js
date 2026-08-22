@@ -14,7 +14,22 @@ function runProcess(mainWindow, jsFile, arrayParams, onSuccess, onProgress, onEr
     )
 
   taskProcess.stdout.on('data', (data) => {
-    const progress = data.toString().split('*')
+    const raw = data.toString()
+    // Lignes de debug (ex. flash R36S) : log sans tuer le process ni parser le protocole *
+    const protocolParts = []
+    raw.split(/\n/).forEach((line) => {
+      if (line.startsWith('[r36s-flash]')) {
+        console.log(line)
+      } else if (line.length) {
+        protocolParts.push(line)
+      }
+    })
+    const text = protocolParts.join('')
+    if (!text) {
+      return
+    }
+
+    const progress = text.split('*')
     console.log(progress)
 
     progress.forEach((p, k) =>

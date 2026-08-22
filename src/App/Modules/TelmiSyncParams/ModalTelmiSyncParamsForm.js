@@ -17,7 +17,10 @@ function ModalTelmiSyncParamsForm({onClose}) {
     {params, saveParams} = useTelmiSyncParams(),
     [audioDevices, setAudioDevices] = useState([]),
     [appVersion, setAppVersion] = useState(''),
-    [deviceMode, setDeviceMode] = useState(params?.deviceMode === 'r36s' ? 'r36s' : 'miyoo'),
+    initialMode = params?.deviceMode === 'r36s' || params?.deviceMode === 'switch'
+      ? params.deviceMode
+      : 'miyoo',
+    [deviceMode, setDeviceMode] = useState(initialMode),
     inputRef0 = useRef(),
     inputRef1 = useRef(),
     inputRef2 = useRef(),
@@ -55,6 +58,7 @@ function ModalTelmiSyncParamsForm({onClose}) {
                          options={[
                            {value: 'miyoo', text: getLocale('telmi-sync-device-miyoo')},
                            {value: 'r36s', text: getLocale('telmi-sync-device-r36s')},
+                           {value: 'switch', text: getLocale('telmi-sync-device-switch')},
                          ]}
                          onChange={(v) => setDeviceMode(v)}
                          ref={inputRef2}/>
@@ -94,12 +98,14 @@ function ModalTelmiSyncParamsForm({onClose}) {
                                      refs,
                                      (values) => {
                                        const piper = values[1].split('/')
-                                       const mode = values[2] === 'r36s' ? 'r36s' : 'miyoo'
+                                       const mode = values[2] === 'r36s' || values[2] === 'switch'
+                                         ? values[2]
+                                         : 'miyoo'
                                        const next = {
                                          ...params,
                                          piper: {voice: piper[0], speaker: piper[1]},
                                          deviceMode: mode,
-                                         switchMode: false,
+                                         switchMode: mode === 'switch',
                                          telmiR36Path: mode === 'r36s' && values[3]
                                            ? String(values[3]).trim() || null
                                            : (params.telmiR36Path || null)
