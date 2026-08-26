@@ -116,11 +116,8 @@ async function findBootRoot(telmiDrive) {
       return withSep(root)
     }
   }
-  // 2) BOOT markers (Image / uInitrd / TELMI-VERSION / active DTB)
+  // 2) BOOT markers (Image / uInitrd / TELMI-VERSION / active DTB) — y compris le lecteur courant (SD OS)
   for (const root of candidates) {
-    if (sameMount(root, telmiRoot)) {
-      continue
-    }
     if (isLikelyBootRoot(root)) {
       return withSep(root)
     }

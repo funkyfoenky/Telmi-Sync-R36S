@@ -18,6 +18,39 @@ const
       )
   },
 
+  /** Volume BOOT R36S (SD OS dual ou mono) — pas de autorun.inf TELMI. */
+  isTelmiOSR36sBootVolume = (drive) => {
+    if (!drive || !fs.existsSync(drive)) {
+      return false
+    }
+    return fs.existsSync(path.join(drive, 'TELMI-VERSION.txt')) ||
+      fs.existsSync(path.join(drive, 'uInitrd')) ||
+      fs.existsSync(path.join(drive, 'Image')) ||
+      fs.existsSync(path.join(drive, 'rf3536k3ka.dtb')) ||
+      fs.existsSync(path.join(drive, 'revs.json'))
+  },
+
+  parseTelmiOSR36sBoot = (drive) => {
+    if (!isTelmiOSR36sBootVolume(drive)) {
+      return null
+    }
+    let version = {major: 0, minor: 0, fix: 0}
+    const versionFilePath = path.join(drive, 'TELMI-VERSION.txt')
+    if (fs.existsSync(versionFilePath)) {
+      const raw = fs.readFileSync(versionFilePath).toString('utf8').trim()
+      const match = raw.match(/(\d+\.\d+\.\d+)/)
+      const parsed = versionStringToObject(match ? match[1] : raw)
+      if (parsed !== null) {
+        version = parsed
+      }
+    }
+    return {
+      label: 'TelmiOS',
+      version,
+      osOnly: true
+    }
+  },
+
   parseTelmiOSAutorun = (drive, switchMode = false) => {
     // Switch mode: TelmiOS on console SD — folders switch/Telmi/Stories + switch/Telmi/Music (+ TelmiVersion.txt).
     if (switchMode) {
@@ -104,4 +137,4 @@ const
     return null
   }
 
-export { parseInfFile, parseTelmiOSAutorun }
+export { parseInfFile, parseTelmiOSAutorun, parseTelmiOSR36sBoot, isTelmiOSR36sBootVolume }

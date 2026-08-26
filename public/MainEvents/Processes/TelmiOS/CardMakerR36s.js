@@ -174,12 +174,16 @@ const resolveDiskNumberFromLetter = (letter) => new Promise((resolve) => {
  * Flash GPT R36S via flash-telmi-sd-win.ps1 (Windows natif, sans WSL).
  * Image = latest release GitHub. Script = embarqué dans extraResources/r36s.
  * @param {string} drive ex. "E:\\" ou "E:"
+ * @param {string} [sdLayout] 'mono' (from-image) | 'multi' (os-only)
  */
-async function main(drive) {
+async function main(drive, sdLayout = 'mono') {
   if (process.platform !== 'win32') {
     process.stderr.write('r36s-flash-windows-only')
     return
   }
+
+  const layout = sdLayout === 'multi' ? 'multi' : 'mono'
+  const flashMode = layout === 'multi' ? 'os-only' : 'from-image'
 
   const letter = (drive || '').replace(/[^A-Za-z]/g, '').substring(0, 1).toUpperCase()
   if (!letter) {
@@ -222,9 +226,16 @@ async function main(drive) {
     if (!bounds) {
       return
     }
+    // os-only : pas d'expand/seed — étendre write/gpt
+    if (layout === 'multi' && (stepName === 'expand' || stepName === 'seed')) {
+      return
+    }
     let overall = bounds.lo
     if (stepName === 'write' && Number.isFinite(pct) && pct >= 0) {
-      overall = bounds.lo + Math.round((Math.min(100, pct) / 100) * (bounds.hi - bounds.lo))
+      const hi = layout === 'multi' ? 88 : bounds.hi
+      overall = bounds.lo + Math.round((Math.min(100, pct) / 100) * (hi - bounds.lo))
+    } else if (stepName === 'gpt' && layout === 'multi') {
+      overall = 90
     } else if (stepName === 'done') {
       overall = 100
     }
@@ -232,13 +243,12 @@ async function main(drive) {
   }
 
   emitFlashLog('script=' + script)
+  emitFlashLog('layout=' + layout + ' flashMode=' + flashMode)
   emitFlashLog('letter=' + letter + ' diskNumber=' + diskNumber)
   emitFlashLog('image=' + imgPath)
   emitFlashLog('logFile=' + logFile)
   emitFlashLog('progressFile=' + progressFile)
 
-  // Elevation UAC : Start-Process -Verb RunAs -Wait -WindowStyle Hidden
-  // Progression réelle via -ProgressFile (pas de timer fictif)
   const elevateScript =
     '$ErrorActionPreference = "Stop"; ' +
     '$p = Start-Process -FilePath "powershell.exe" -Verb RunAs -Wait -PassThru ' +
@@ -249,7 +259,7 @@ async function main(drive) {
       '-ExecutionPolicy', 'Bypass',
       '-File', script,
       '-DiskNumber', String(diskNumber),
-      '-Mode', 'from-image',
+      '-Mode', flashMode,
       '-ImagePath', imgPath,
       '-Yes',
       '-LogFile', logFile,
@@ -380,4 +390,186 @@ async function main(drive) {
   })
 }
 
-export {main, getBundledFlashScript}
+const getBundledPrepareContentScript = () => {
+  const bundled = path.join(getExtraResourcesPath(), 'r36s', 'prepare-content-sd.ps1')
+  return fs.existsSync(bundled) ? bundled : null
+}
+
+/**
+ * Prépare une SD contenu (slot gauche) via prepare-content-sd.ps1.
+ * @param {string} drive
+ */
+async function prepareContent(drive) {
+  if (process.platform !== 'win32') {
+    process.stderr.write('r36s-flash-windows-only')
+    return
+  }
+  const letter = (drive || '').replace(/[^A-Za-z]/g, '').substring(0, 1).toUpperCase()
+  if (!letter) {
+    process.stderr.write('device-not-found')
+    return
+  }
+  const script = getBundledPrepareContentScript()
+  if (!script) {
+    process.stderr.write('r36s-content-script-missing')
+    return
+  }
+
+  emitProgress('r36s-step-content-prepare', 10)
+  const diskNumber = await resolveDiskNumberFromLetter(letter)
+  if (diskNumber === null || diskNumber < 0) {
+    process.stderr.write('r36s-disk-not-found')
+    return
+  }
+
+  const stamp = Date.now()
+  const exitFile = path.join(os.tmpdir(), 'telmi-r36-content-exit-' + stamp + '.txt')
+  const logFile = path.join(os.tmpdir(), 'telmi-r36-content-' + stamp + '.log')
+  const progressFile = path.join(os.tmpdir(), 'telmi-r36-content-progress-' + stamp + '.txt')
+
+  const emitFlashLog = (line) => {
+    const s = String(line || '').replace(/\r?\n/g, ' ').trim()
+    if (s) {
+      process.stdout.write('\n[r36s-flash] ' + s + '\n')
+    }
+  }
+
+  const contentBounds = {
+    prepare: {key: 'r36s-step-content-prepare', lo: 10, hi: 25},
+    format: {key: 'r36s-step-content-format', lo: 25, hi: 70},
+    seed: {key: 'r36s-step-content-seed', lo: 70, hi: 95},
+    done: {key: 'r36s-step-done', lo: 100, hi: 100}
+  }
+
+  emitFlashLog('prepare-content script=' + script + ' disk=' + diskNumber)
+
+  const elevateScript =
+    '$ErrorActionPreference = "Stop"; ' +
+    '$p = Start-Process -FilePath "powershell.exe" -Verb RunAs -Wait -PassThru ' +
+    '-WindowStyle Hidden -ArgumentList @(' +
+    [
+      '-NoProfile',
+      '-WindowStyle', 'Hidden',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', script,
+      '-DiskNumber', String(diskNumber),
+      '-Yes',
+      '-LogFile', logFile,
+      '-ProgressFile', progressFile
+    ].map(psSingleQuote).join(',') +
+    '); ' +
+    'if ($null -eq $p) { Set-Content -Path ' + psSingleQuote(exitFile) + ' -Value "1" -Encoding ASCII } ' +
+    'else { Set-Content -Path ' + psSingleQuote(exitFile) + ' -Value ([string]$p.ExitCode) -Encoding ASCII }'
+
+  let logOffset = 0
+  let logCarry = ''
+  let lastProgressRaw = ''
+  const relayLogFile = () => {
+    try {
+      if (!fs.existsSync(logFile)) {
+        return
+      }
+      const size = fs.statSync(logFile).size
+      if (size <= logOffset) {
+        return
+      }
+      const fd = fs.openSync(logFile, 'r')
+      const len = size - logOffset
+      const buf = Buffer.alloc(len)
+      fs.readSync(fd, buf, 0, len, logOffset)
+      fs.closeSync(fd)
+      logOffset = size
+      logCarry += buf.toString('utf8')
+      const parts = logCarry.split(/\r?\n/)
+      logCarry = parts.pop() || ''
+      for (const line of parts) {
+        const t = line.trim()
+        if (!t || /^[\*]{2,}/.test(t) || /^Windows PowerShell/.test(t) || /^Copyright /.test(t) ||
+          /^Le transcript a /.test(t) || /^Transcript (started|stopped)/i.test(t)) {
+          continue
+        }
+        emitFlashLog(t)
+      }
+    } catch (e) {}
+  }
+
+  const relayProgressFile = () => {
+    try {
+      if (!fs.existsSync(progressFile)) {
+        return
+      }
+      const raw = fs.readFileSync(progressFile, 'utf8').trim()
+      if (!raw || raw === lastProgressRaw) {
+        return
+      }
+      lastProgressRaw = raw
+      const stepMatch = raw.match(/STEP=([a-z]+)/i)
+      if (!stepMatch) {
+        return
+      }
+      const stepName = stepMatch[1].toLowerCase()
+      const bounds = contentBounds[stepName]
+      if (bounds) {
+        emitProgress(bounds.key, bounds.lo)
+      }
+    } catch (e) {}
+  }
+
+  const poll = setInterval(() => {
+    relayLogFile()
+    relayProgressFile()
+  }, 500)
+
+  const child = spawn(
+    'powershell.exe',
+    ['-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-Command', elevateScript],
+    {windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']}
+  )
+
+  child.stdout.on('data', (d) => {
+    String(d.toString()).split(/\r?\n/).forEach((l) => {
+      if (l.trim()) {
+        emitFlashLog('elevate-out: ' + l.trim())
+      }
+    })
+  })
+  child.stderr.on('data', (d) => {
+    String(d.toString()).split(/\r?\n/).forEach((l) => {
+      if (l.trim()) {
+        emitFlashLog('elevate-err: ' + l.trim())
+      }
+    })
+  })
+
+  const finish = (ok) => {
+    clearInterval(poll)
+    relayLogFile()
+    relayProgressFile()
+    try { fs.unlinkSync(exitFile) } catch (e) {}
+    try { fs.unlinkSync(progressFile) } catch (e) {}
+    if (ok) {
+      emitProgress('r36s-step-done', PROGRESS_TOTAL)
+      process.stdout.write('success')
+    } else {
+      process.stderr.write('r36s-content-prepare-failed')
+    }
+  }
+
+  child.on('error', () => finish(false))
+  child.on('exit', () => {
+    setTimeout(() => {
+      let code = 1
+      try {
+        if (fs.existsSync(exitFile)) {
+          code = parseInt(fs.readFileSync(exitFile, 'utf8').trim(), 10)
+        }
+      } catch (e) {}
+      if (!Number.isFinite(code)) {
+        code = 1
+      }
+      finish(code === 0)
+    }, 300)
+  })
+}
+
+export {main, prepareContent, getBundledFlashScript, getBundledPrepareContentScript}

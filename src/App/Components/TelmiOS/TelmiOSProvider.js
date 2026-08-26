@@ -63,6 +63,11 @@ function TelmiOSProvider ({children}) {
         return
       }
 
+      // SD OS seule (BOOT) : pas de check firmware / pas de sync Stories
+      if (telmiOS.osOnly) {
+        return
+      }
+
       // R36S : check silencieuse (popup si outdated via telmios-update-outdated)
       if (isR36s) {
         ipcRenderer.send('telmios-update', telmiOS)
@@ -96,16 +101,16 @@ function TelmiOSProvider ({children}) {
   )
 
   useElectronListener('telmios-stories-data', (telmiOSStories) => setStories(telmiOSStories), [setStories])
-  useElectronEmitter('telmios-stories-get', [telmiOS])
+  useElectronEmitter('telmios-stories-get', [telmiOS && !telmiOS.osOnly ? telmiOS : null])
 
   useElectronListener('telmios-musics-data', (telmiOSMusics) => setMusic(telmiOSMusics), [setMusic])
-  useElectronEmitter('telmios-musics-get', [telmiOS])
+  useElectronEmitter('telmios-musics-get', [telmiOS && !telmiOS.osOnly ? telmiOS : null])
 
   useElectronListener('telmios-games-data', (telmiOSGames) => setGames(telmiOSGames), [setGames])
-  // Jeux appareil : uniquement en mode R36S (évite de créer Games/ sur Miyoo)
+  // Jeux appareil : uniquement en mode R36S (évite de créer Games/ sur Miyoo / BOOT)
   useEffect(
     () => {
-      if (!isR36s || telmiOS === null) {
+      if (!isR36s || telmiOS === null || telmiOS.osOnly) {
         setGames([])
         return
       }

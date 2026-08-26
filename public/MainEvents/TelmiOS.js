@@ -1,6 +1,6 @@
 import {ipcMain} from 'electron'
 import * as drivelist from 'drivelist'
-import {parseTelmiOSAutorun} from './Helpers/InfFiles.js'
+import {parseTelmiOSAutorun, parseTelmiOSR36sBoot, isTelmiOSR36sBootVolume} from './Helpers/InfFiles.js'
 import {readTelmiOSParameters, saveTelmiOSParameters} from './Helpers/TelmiOS.js'
 import {isSwitchMode, isR36sMode} from './Helpers/DeviceMode.js'
 import {getTelmiRevCatalog, applyTelmiRev} from './Helpers/TelmiOSRev.js'
@@ -19,13 +19,44 @@ function mainEventTelmiOS(mainWindow) {
   const checkUsbDevices = async () => {
     const drives = (await drivelist.list()).reduce((acc, d) => [...acc, ...d.mountpoints.map((p) => p.path)], [])
     const switchMode = isSwitchMode()
+    const r36sMode = isR36sMode()
+
+    let contentDevice = null
+    let bootDevice = null
 
     for (const drive of drives) {
       const telmiOS = parseTelmiOSAutorun(drive, switchMode)
       if (telmiOS !== null) {
-        mainWindow.webContents.send('telmios-data', readTelmiOSParameters({drive, telmiOS}))
-        return
+        contentDevice = readTelmiOSParameters({drive, telmiOS, osOnly: false})
+        // En R36S on continue pour éventuellement noter BOOT, mais on privilégie TELMI
+        if (!r36sMode) {
+          mainWindow.webContents.send('telmios-data', contentDevice)
+          return
+        }
+        continue
       }
+      if (r36sMode && !bootDevice) {
+        const bootTelmi = parseTelmiOSR36sBoot(drive)
+        if (bootTelmi !== null) {
+          bootDevice = readTelmiOSParameters({
+            drive,
+            telmiOS: {
+              label: bootTelmi.label,
+              version: bootTelmi.version
+            },
+            osOnly: true
+          })
+        }
+      }
+    }
+
+    if (contentDevice) {
+      mainWindow.webContents.send('telmios-data', contentDevice)
+      return
+    }
+    if (bootDevice) {
+      mainWindow.webContents.send('telmios-data', bootDevice)
+      return
     }
 
     mainWindow.webContents.send('telmios-data', null)
@@ -47,6 +78,32 @@ function mainEventTelmiOS(mainWindow) {
           .filter((d) => d.isRemovable && d.partitionTableType !== null)
           .reduce((acc, d) => [...acc, ...d.mountpoints.map((p) => ({name: d.description, drive: p.path, size: d.size}))], [])
       )
+    }
+  )
+
+  // Liste pour préparation SD contenu : exclut les volumes BOOT (SD OS), pas la lettre
+  // (Windows réutilise souvent la même lettre après retrait de la SD OS).
+  ipcMain.on(
+    'telmios-disklist-content',
+    async (event) => {
+      const list = await drivelist.list()
+      const out = []
+      for (const d of list) {
+        if (!d.isRemovable) {
+          continue
+        }
+        // Inclure aussi les cartes sans table reconnue si elles ont un point de montage
+        if (d.partitionTableType === null && !(d.mountpoints && d.mountpoints.length)) {
+          continue
+        }
+        for (const mp of d.mountpoints || []) {
+          if (isTelmiOSR36sBootVolume(mp.path)) {
+            continue
+          }
+          out.push({name: d.description, drive: mp.path, size: d.size})
+        }
+      }
+      mainWindow.webContents.send('telmios-disklist-content-data', out)
     }
   )
 
@@ -149,10 +206,15 @@ function mainEventTelmiOS(mainWindow) {
       if (drive === undefined || drive === null) {
         return
       }
+      const drivePath = typeof drive === 'string' ? drive : drive.drive
+      const sdLayout = (typeof drive === 'object' && drive.sdLayout === 'multi') ? 'multi' : 'mono'
+      if (!drivePath) {
+        return
+      }
       runProcess(
         mainWindow,
         path.join('TelmiOS', 'CardMaker.js'),
-        [drive.drive],
+        [drivePath, sdLayout],
         () => {},
         (message, current, total) => {
           mainWindow.webContents.send('telmios-cardmaker-task', 'telmios-cardmaker', message, current, total)
@@ -169,6 +231,42 @@ function mainEventTelmiOS(mainWindow) {
         },
         () => {
           mainWindow.webContents.send('telmios-cardmaker-task', '', '', 0, 0)
+          checkUsbDevices()
+        }
+      )
+    }
+  )
+
+  ipcMain.on(
+    'telmios-prepare-content',
+    async (event, drive) => {
+      if (drive === undefined || drive === null) {
+        return
+      }
+      const drivePath = typeof drive === 'string' ? drive : drive.drive
+      if (!drivePath) {
+        return
+      }
+      runProcess(
+        mainWindow,
+        path.join('TelmiOS', 'PrepareContentR36s.js'),
+        [drivePath],
+        () => {},
+        (message, current, total) => {
+          mainWindow.webContents.send('telmios-prepare-content-task', 'telmios-prepare-content', message, current, total)
+        },
+        (error) => {
+          const raw = (error || 'r36s-content-prepare-failed').toString().trim()
+          const first = (raw.split(/\r?\n/).find((l) => l.trim()) || 'r36s-content-prepare-failed').trim()
+          const known = first.match(/^(r36s-[\w-]+|device-not-found)/)
+          mainWindow.webContents.send(
+            'telmios-prepare-content-error',
+            'telmios-prepare-content',
+            known ? known[1] : 'r36s-content-prepare-failed'
+          )
+        },
+        () => {
+          mainWindow.webContents.send('telmios-prepare-content-task', '', '', 0, 0)
           checkUsbDevices()
         }
       )

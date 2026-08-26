@@ -1,28 +1,8 @@
 # Select-Telmi-REV.ps1 — apres flash, configure la REV sur le volume BOOT (FAT).
 # Aucun WSL / rootfs : copie DTB + TELMI-REV.txt + TELMI-AUDIO-PATH.txt
-#
-# Interactif :
-#   powershell -File Select-Telmi-REV.ps1
-# Non-interactif (Telmi Sync) :
-#   powershell -File Select-Telmi-REV.ps1 -BootLetter E -RevId V20
-#
-param(
-    [string]$BootLetter = '',
-    [string]$RevId = ''
-)
-
 $ErrorActionPreference = 'Stop'
 
 function Get-BootVolume {
-    param([string]$Letter = '')
-
-    if ($Letter) {
-        $L = $Letter.Trim().TrimEnd(':').Substring(0, 1).ToUpper()
-        $v = Get-Volume -DriveLetter $L -ErrorAction SilentlyContinue
-        if (-not $v) { throw "Lecteur ${L}: introuvable" }
-        return $v
-    }
-
     $vols = @(Get-Volume | Where-Object {
         $_.DriveLetter -and $_.FileSystemLabel -eq 'BOOT'
     })
@@ -40,10 +20,10 @@ function Get-BootVolume {
         return $vols[$n - 1]
     }
     Write-Host 'Volume BOOT introuvable par label. Indiquez la lettre.'
-    $letterIn = (Read-Host 'Lettre BOOT (ex: D)').Trim().TrimEnd(':')
-    if ($letterIn -notmatch '^[A-Za-z]$') { throw 'Lettre invalide' }
-    $v = Get-Volume -DriveLetter $letterIn -ErrorAction SilentlyContinue
-    if (-not $v) { throw "Lecteur ${letterIn}: introuvable" }
+    $letter = (Read-Host 'Lettre BOOT (ex: D)').Trim().TrimEnd(':')
+    if ($letter -notmatch '^[A-Za-z]$') { throw 'Lettre invalide' }
+    $v = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
+    if (-not $v) { throw "Lecteur ${letter}: introuvable" }
     return $v
 }
 
@@ -52,7 +32,7 @@ Write-Host ' TelmiOS - Selection REV (post-flash)'
 Write-Host ' ===================================='
 Write-Host ''
 
-$boot = Get-BootVolume -Letter $BootLetter
+$boot = Get-BootVolume
 $root = ("{0}:\" -f $boot.DriveLetter)
 Write-Host (" BOOT = {0}" -f $root)
 
@@ -66,26 +46,21 @@ if (-not $catalog.revs -or $catalog.revs.Count -eq 0) {
     throw 'revs.json invalide (pas de revs)'
 }
 
-if ($RevId) {
-    $rev = $catalog.revs | Where-Object { $_.id -eq $RevId } | Select-Object -First 1
-    if (-not $rev) { throw "REV inconnue : $RevId" }
-} else {
-    Write-Host ''
-    Write-Host ' REVs disponibles :'
-    for ($i = 0; $i -lt $catalog.revs.Count; $i++) {
-        $r = $catalog.revs[$i]
-        $mark = ''
-        if ($r.id -eq $catalog.default) { $mark = ' (defaut image)' }
-        Write-Host ("  [{0}] {1} - {2}{3}" -f ($i + 1), $r.id, $r.label, $mark)
-    }
-    Write-Host ''
-    $sel = (Read-Host 'Numero de REV').Trim()
-    $idx = 0
-    if (-not [int]::TryParse($sel, [ref]$idx) -or $idx -lt 1 -or $idx -gt $catalog.revs.Count) {
-        throw 'Choix invalide'
-    }
-    $rev = $catalog.revs[$idx - 1]
+Write-Host ''
+Write-Host ' REVs disponibles :'
+for ($i = 0; $i -lt $catalog.revs.Count; $i++) {
+    $r = $catalog.revs[$i]
+    $mark = ''
+    if ($r.id -eq $catalog.default) { $mark = ' (defaut image)' }
+    Write-Host ("  [{0}] {1} - {2}{3}" -f ($i + 1), $r.id, $r.label, $mark)
 }
+Write-Host ''
+$sel = (Read-Host 'Numero de REV').Trim()
+$idx = 0
+if (-not [int]::TryParse($sel, [ref]$idx) -or $idx -lt 1 -or $idx -gt $catalog.revs.Count) {
+    throw 'Choix invalide'
+}
+$rev = $catalog.revs[$idx - 1]
 
 $dtbRel = [string]$rev.dtb
 $dtbSrc = Join-Path $root ($dtbRel -replace '/', '\')

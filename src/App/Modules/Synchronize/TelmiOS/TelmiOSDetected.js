@@ -22,6 +22,7 @@ function TelmiOSDetected ({telmiOS, onTransfer, children}) {
     {addModal, rmModal} = useModal(),
     {params} = useTelmiSyncParams(),
     isR36s = params && params.deviceMode === 'r36s',
+    isOsOnly = !!(telmiOS && telmiOS.osOnly),
     onTelmiOSParams = useCallback(
       () => {
         addModal(
@@ -72,7 +73,13 @@ function TelmiOSDetected ({telmiOS, onTransfer, children}) {
         <span className={styles.telmiOSTitleText}>
           {telmiOS.telmiOS.label + ' v' + telmiOS.telmiOS.version.major + '.' + telmiOS.telmiOS.version.minor + '.' + telmiOS.telmiOS.version.fix}
           {
-            telmiOS.diskusage !== null &&
+            isOsOnly &&
+            <span className={styles.telmiOSTitleFreeSpace}>
+              ({getLocale('telmios-os-sd-label')})
+            </span>
+          }
+          {
+            !isOsOnly && telmiOS.diskusage !== null &&
             <span className={styles.telmiOSTitleFreeSpace}>
               ({getLocale('avail')} : {bytesToGigabytes(telmiOS.diskusage.available)}Go / {bytesToGigabytes(telmiOS.diskusage.total)}Go)
             </span>
@@ -85,18 +92,21 @@ function TelmiOSDetected ({telmiOS, onTransfer, children}) {
                                    title={getLocale('telmios-rev')}
                                    onClick={onTelmiOSRev}/>
             }
-            <ButtonIconGear className={styles.telmiOSTitleIcon}
-                            title={getLocale('telmios-parameters')}
-                            onClick={onTelmiOSParams}/>
+            {
+              !isOsOnly &&
+              <ButtonIconGear className={styles.telmiOSTitleIcon}
+                              title={getLocale('telmios-parameters')}
+                              onClick={onTelmiOSParams}/>
+            }
             <ButtonIconEject className={styles.telmiOSTitleIcon}
                              title={getLocale('telmios-eject')}
                              onClick={onTelmiOSEject}/>
           </span>
       </h2>
-      {children}
+      {isOsOnly ? <p>{getLocale('telmios-os-sd-hint')}</p> : children}
     </div>
     {
-      onTransfer &&
+      onTransfer && !isOsOnly &&
       <ButtonIconAnglesLeft className={styles.buttonTransfer}
                             title={getLocale('transfer-files')}
                             onClick={onTransfer}/>

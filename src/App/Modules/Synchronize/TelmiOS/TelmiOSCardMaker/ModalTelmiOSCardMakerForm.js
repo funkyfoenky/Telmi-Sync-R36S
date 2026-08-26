@@ -1,6 +1,7 @@
 import {useRef, useState} from 'react'
 import {useLocale} from '../../../../Components/Locale/LocaleHooks.js'
 import {useModal} from '../../../../Components/Modal/ModalHooks.js'
+import {useTelmiSyncParams} from '../../../../Components/TelmiSyncParams/TelmiSyncParamsHooks.js'
 import {useElectronEmitter, useElectronListener} from '../../../../Components/Electron/Hooks/UseElectronEvent.js'
 
 import ModalLayoutPadded from '../../../../Components/Modal/ModalLayoutPadded.js'
@@ -12,17 +13,18 @@ import ButtonsContainer from '../../../../Components/Buttons/ButtonsContainer.js
 import ButtonIconTextSDCard from '../../../../Components/Buttons/IconsTexts/ButtonIconTextSDCard.js'
 import ModalTelmiOSCardMakerConfirm from './ModalTelmiOSCardMakerConfirm.js'
 
-
-const
-  toGigabytes = (bytes) => (bytes / 1073741824).toFixed(2)
-
+const toGigabytes = (bytes) => (bytes / 1073741824).toFixed(2)
 
 function ModalTelmiOSCardMakerForm({onClose}) {
   const
     {getLocale} = useLocale(),
     {addModal, rmModal} = useModal(),
+    {params} = useTelmiSyncParams(),
+    isR36s = params && params.deviceMode === 'r36s',
     [drives, setDrives] = useState([]),
-    inputRefDrive = useRef()
+    [sdLayout, setSdLayout] = useState('mono'),
+    inputRefDrive = useRef(),
+    inputRefLayout = useRef()
 
   useElectronEmitter('telmios-disklist', [])
   useElectronListener(
@@ -40,7 +42,25 @@ function ModalTelmiOSCardMakerForm({onClose}) {
       (validation) => {
         return <>
           <ModalContent>
-            <InputSelect label={getLocale('telmios-cardmaker-select')}
+            {
+              isR36s &&
+              <InputSelect label={getLocale('telmios-cardmaker-sd-layout')}
+                           key="telmios-cardmaker-sd-layout"
+                           id="telmios-cardmaker-sd-layout"
+                           required={true}
+                           defaultValue={sdLayout}
+                           options={[
+                             {value: 'mono', text: getLocale('telmios-cardmaker-sd-mono')},
+                             {value: 'multi', text: getLocale('telmios-cardmaker-sd-multi')}
+                           ]}
+                           onChange={(v) => setSdLayout(v)}
+                           ref={inputRefLayout}/>
+            }
+            {
+              isR36s &&
+              <p>{getLocale(sdLayout === 'multi' ? 'telmios-cardmaker-sd-multi-hint' : 'telmios-cardmaker-sd-mono-hint')}</p>
+            }
+            <InputSelect label={getLocale(isR36s && sdLayout === 'multi' ? 'telmios-cardmaker-select-os' : 'telmios-cardmaker-select')}
                          key="telmios-cardmaker-drive"
                          id="telmios-cardmaker-drive"
                          required={true}
@@ -57,12 +77,16 @@ function ModalTelmiOSCardMakerForm({onClose}) {
             <ButtonIconTextSDCard text={getLocale('make')}
                                   rounded={true}
                                   onClick={() => {
+                                    const refs = isR36s ? [inputRefLayout, inputRefDrive] : [inputRefDrive]
                                     validation(
-                                      [
-                                        inputRefDrive
-                                      ],
+                                      refs,
                                       (values) => {
-                                        const selectedDrive = drives[values[0]]
+                                        const layout = isR36s ? values[0] : 'mono'
+                                        const driveIndex = isR36s ? values[1] : values[0]
+                                        const selectedDrive = {
+                                          ...drives[driveIndex],
+                                          sdLayout: layout === 'multi' ? 'multi' : 'mono'
+                                        }
                                         addModal((key) => {
                                           const modal = <ModalTelmiOSCardMakerConfirm key={key}
                                                                                       drive={selectedDrive}
