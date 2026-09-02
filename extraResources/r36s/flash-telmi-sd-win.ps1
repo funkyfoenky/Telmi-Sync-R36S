@@ -15,6 +15,8 @@ param(
     [int]$DiskNumber = -1,
     [ValidateSet('from-image', 'os-only', 'expand')]
     [string]$Mode = 'from-image',
+    [ValidateSet('v20', 'other', '')]
+    [string]$ImageProfile = '',
     [switch]$Yes,
     [string]$ImagePath = '',
     [string]$LogFile = '',
@@ -71,6 +73,30 @@ $RootPartStart = 1056768L
 $RootPartSizeMb = 1536L
 $RootPartSectors = $RootPartSizeMb * 1024L * 1024L / 512L
 $RootPartEnd = $RootPartStart + $RootPartSectors - 1L
+
+function Write-TelmiImageProfile {
+    param(
+        [int]$DiskNum,
+        [string]$Profile
+    )
+    if ($Profile -notin @('v20', 'other')) { return }
+    Start-Sleep -Seconds 1
+    Update-Disk -Number $DiskNum -EA SilentlyContinue | Out-Null
+    $bootPart = Get-Partition -DiskNumber $DiskNum -PartitionNumber 1 -EA SilentlyContinue
+    if (-not $bootPart) { return }
+    if (-not $bootPart.DriveLetter) {
+        try {
+            Add-PartitionAccessPath -DiskNumber $DiskNum -PartitionNumber 1 -AssignDriveLetter -EA Stop
+            $bootPart = Get-Partition -DiskNumber $DiskNum -PartitionNumber 1 -EA SilentlyContinue
+        } catch {}
+    }
+    $letter = $bootPart.DriveLetter
+    if (-not $letter) { return }
+    $bootRoot = Join-Path ("{0}:" -f $letter) ''
+    $profilePath = Join-Path $bootRoot 'TELMI-IMAGE-PROFILE.txt'
+    Set-Content -LiteralPath $profilePath -Value $Profile -NoNewline -Encoding ASCII
+    Write-Host (" Profil image ecrit : {0}" -f $Profile)
+}
 
 function Get-LatestImage {
     if ($ImagePath -and (Test-Path $ImagePath)) { return (Resolve-Path $ImagePath).Path }
@@ -675,15 +701,28 @@ if ($Mode -eq 'expand' -or $Mode -eq 'from-image') {
     Write-Host ' Mode os-only : pas d expand p3 (contenu sur slot gauche via Prepare-Content-SD.bat)' -ForegroundColor Yellow
 }
 
+if ($Mode -in @('from-image', 'os-only') -and $ImageProfile) {
+    Write-TelmiImageProfile -DiskNum $diskNum -Profile $ImageProfile
+}
+
 Write-TelmiProgress 'done' 100
 Write-Host ''
 Write-Host '============================================================' -ForegroundColor Green
 if ($Mode -eq 'os-only') {
     Write-Host ' Flash OS OK (dual-SD)' -ForegroundColor Green
-    Write-Host ' Ensuite : Prepare-Content-SD.bat (slot gauche) + Select-Telmi-REV.bat' -ForegroundColor Green
+    Write-Host ' Ensuite : Prepare-Content-SD.bat (slot gauche)' -ForegroundColor Green
+    if ($ImageProfile -eq 'other') {
+        Write-Host ' Puis selectionnez le DTB depuis Telmi Sync (icon puce)' -ForegroundColor Green
+    }
 } else {
     Write-Host ' Flash/expand OK (sans WSL)' -ForegroundColor Green
-    Write-Host ' Ensuite : Select-Telmi-REV.bat  (V20 ou V30 Panel4)' -ForegroundColor Green
+    if ($ImageProfile -eq 'other') {
+        Write-Host ' Ensuite : selection DTB depuis Telmi Sync (icon puce)' -ForegroundColor Green
+    } elseif ($ImageProfile -eq 'v20') {
+        Write-Host ' Image V20 : DTB deja inclus, demarrage direct' -ForegroundColor Green
+    } else {
+        Write-Host ' Ensuite : Select-Telmi-REV.bat  (V20 ou V30 Panel4)' -ForegroundColor Green
+    }
 }
 Write-Host '============================================================' -ForegroundColor Green
 } catch {

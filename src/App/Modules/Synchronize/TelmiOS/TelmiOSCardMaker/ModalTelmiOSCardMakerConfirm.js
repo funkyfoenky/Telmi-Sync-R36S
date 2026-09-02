@@ -12,6 +12,7 @@ function ModalTelmiOSCardMakerConfirm({drive, onClose}) {
     {addModal, rmModal} = useModal(),
     isR36s = params && params.deviceMode === 'r36s',
     isMulti = isR36s && drive.sdLayout === 'multi',
+    isOther = isR36s && drive.imageProfile === 'other',
     driveLabel = '<strong>' + drive.drive + ' (' + drive.name + ')</strong>',
     title = !isR36s
       ? getLocale('telmios-cardmaker-alert', drive.drive)
@@ -21,8 +22,14 @@ function ModalTelmiOSCardMakerConfirm({drive, onClose}) {
     message = !isR36s
       ? getLocale('telmios-cardmaker-alert-message', driveLabel)
       : (isMulti
-        ? getLocale('telmios-cardmaker-alert-message-r36s-multi', driveLabel)
-        : getLocale('telmios-cardmaker-alert-message-r36s', driveLabel))
+        ? getLocale(
+          isOther ? 'telmios-cardmaker-alert-message-r36s-multi-other' : 'telmios-cardmaker-alert-message-r36s-multi',
+          driveLabel
+        )
+        : getLocale(
+          isOther ? 'telmios-cardmaker-alert-message-r36s-other' : 'telmios-cardmaker-alert-message-r36s',
+          driveLabel
+        ))
 
   return <ModalDialogConfirm title={title}
                              message={message}

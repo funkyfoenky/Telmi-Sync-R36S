@@ -22,7 +22,9 @@ function ModalTelmiOSCardMakerForm({onClose}) {
     {params} = useTelmiSyncParams(),
     isR36s = params && params.deviceMode === 'r36s',
     [drives, setDrives] = useState([]),
+    [imageProfile, setImageProfile] = useState('v20'),
     [sdLayout, setSdLayout] = useState('mono'),
+    inputRefProfile = useRef(),
     inputRefDrive = useRef(),
     inputRefLayout = useRef()
 
@@ -42,6 +44,24 @@ function ModalTelmiOSCardMakerForm({onClose}) {
       (validation) => {
         return <>
           <ModalContent>
+            {
+              isR36s &&
+              <InputSelect label={getLocale('telmios-cardmaker-image-profile')}
+                           key="telmios-cardmaker-image-profile"
+                           id="telmios-cardmaker-image-profile"
+                           required={true}
+                           defaultValue={imageProfile}
+                           options={[
+                             {value: 'v20', text: getLocale('telmios-cardmaker-image-v20')},
+                             {value: 'other', text: getLocale('telmios-cardmaker-image-other')}
+                           ]}
+                           onChange={(v) => setImageProfile(v)}
+                           ref={inputRefProfile}/>
+            }
+            {
+              isR36s &&
+              <p>{getLocale(imageProfile === 'other' ? 'telmios-cardmaker-image-other-hint' : 'telmios-cardmaker-image-v20-hint')}</p>
+            }
             {
               isR36s &&
               <InputSelect label={getLocale('telmios-cardmaker-sd-layout')}
@@ -77,15 +97,17 @@ function ModalTelmiOSCardMakerForm({onClose}) {
             <ButtonIconTextSDCard text={getLocale('make')}
                                   rounded={true}
                                   onClick={() => {
-                                    const refs = isR36s ? [inputRefLayout, inputRefDrive] : [inputRefDrive]
+                                    const refs = isR36s ? [inputRefProfile, inputRefLayout, inputRefDrive] : [inputRefDrive]
                                     validation(
                                       refs,
                                       (values) => {
-                                        const layout = isR36s ? values[0] : 'mono'
-                                        const driveIndex = isR36s ? values[1] : values[0]
+                                        const profile = isR36s ? values[0] : 'v20'
+                                        const layout = isR36s ? values[1] : 'mono'
+                                        const driveIndex = isR36s ? values[2] : values[0]
                                         const selectedDrive = {
                                           ...drives[driveIndex],
-                                          sdLayout: layout === 'multi' ? 'multi' : 'mono'
+                                          sdLayout: layout === 'multi' ? 'multi' : 'mono',
+                                          imageProfile: profile === 'other' ? 'other' : 'v20'
                                         }
                                         addModal((key) => {
                                           const modal = <ModalTelmiOSCardMakerConfirm key={key}

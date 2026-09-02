@@ -27,7 +27,38 @@ const
       fs.existsSync(path.join(drive, 'uInitrd')) ||
       fs.existsSync(path.join(drive, 'Image')) ||
       fs.existsSync(path.join(drive, 'rf3536k3ka.dtb')) ||
-      fs.existsSync(path.join(drive, 'revs.json'))
+      fs.existsSync(path.join(drive, 'revs.json')) ||
+      fs.existsSync(path.join(drive, 'consoles'))
+  },
+
+  hasR36sConsolePacks = (drive) => {
+    const consolesDir = path.join(drive, 'consoles')
+    if (!fs.existsSync(consolesDir)) {
+      return false
+    }
+    try {
+      return fs.readdirSync(consolesDir, {withFileTypes: true})
+        .some((entry) => entry.isDirectory() && !/^(logo|System Volume Information|dtbo)$/i.test(entry.name))
+    } catch (e) {
+      return false
+    }
+  },
+
+  detectR36sImageProfile = (drive) => {
+    if (!drive || !fs.existsSync(drive)) {
+      return 'v20'
+    }
+    const profilePath = path.join(drive, 'TELMI-IMAGE-PROFILE.txt')
+    if (fs.existsSync(profilePath)) {
+      const raw = fs.readFileSync(profilePath, 'utf8').trim().toLowerCase()
+      if (raw === 'other' || raw === 'v20') {
+        return raw
+      }
+    }
+    if (hasR36sConsolePacks(drive)) {
+      return 'other'
+    }
+    return 'v20'
   },
 
   parseTelmiOSR36sBoot = (drive) => {
@@ -44,10 +75,13 @@ const
         version = parsed
       }
     }
+    const imageProfile = detectR36sImageProfile(drive)
     return {
       label: 'TelmiOS',
       version,
-      osOnly: true
+      osOnly: true,
+      imageProfile,
+      dtbSelectable: imageProfile === 'other'
     }
   },
 
@@ -137,4 +171,4 @@ const
     return null
   }
 
-export { parseInfFile, parseTelmiOSAutorun, parseTelmiOSR36sBoot, isTelmiOSR36sBootVolume }
+export { parseInfFile, parseTelmiOSAutorun, parseTelmiOSR36sBoot, isTelmiOSR36sBootVolume, detectR36sImageProfile, hasR36sConsolePacks }

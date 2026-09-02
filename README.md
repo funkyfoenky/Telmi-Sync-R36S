@@ -7,13 +7,23 @@ Fork de [Telmi Sync](https://github.com/DantSu/Telmi-Sync) avec :
 - Modes plateforme **Miyoo** / **R36S** (paramètres Telmi Sync)
 - Onglet **Jeux** (R36S) : ROMs, jaquettes, contrôles émulation
 - **CardMaker R36S** : flash GPT Windows natif (sans WSL)
-  - Image téléchargée depuis [Telmi-Story-Teller-R36S](https://github.com/funkyfoenky/Telmi-Story-Teller-R36S/releases)
+  - Choix **V20** ou **Other / Autres modèles** (deux dépôts d’images GitHub)
   - Layout **Mono SD** (OS + contenu) ou **Multi SD** (SD OS puis SD contenu)
   - Scripts embarqués : `flash-telmi-sd-win.ps1`, `prepare-content-sd.ps1`, `telmi-sd-common.ps1`
   - Restauration `autorun.inf` après expand TELMI
-- Sélection **REV console** (V20 / V30 Panel4) depuis l’UI  
-  (`revs.json` + DTB embarqués dans `extraResources/r36s/boot/`)
-  - Disponible aussi sur une SD OS seule (partition BOOT, mode multi)
+- **Sélection DTB** (images Other uniquement) depuis l’UI
+  - Catalogue `consoles/` sur la partition BOOT (ArkOS4Clone)
+  - Script `extraResources/r36s/dtb-selector/Select-SoysauceDTB.ps1`
+  - Pas de sélection DTB sur images **V20** (DTB déjà inclus)
+
+## Images GitHub
+
+| Profil | Dépôt | Usage |
+|--------|-------|-------|
+| **V20** | [Telmi-Story-Teller-R36S-V20](https://github.com/funkyfoenky/Telmi-Story-Teller-R36S-V20/releases) | Flash direct, sans choix DTB |
+| **Other** | [Telmi-Story-Teller-R36S-Main](https://github.com/funkyfoenky/Telmi-Story-Teller-R36S-Main/releases) | Flash + sélection modèle console |
+
+Dernière release **stable** publiée (draft / pre-release ignorés).
 
 ## Prérequis
 
@@ -33,20 +43,23 @@ npm start
 npm run build
 ```
 
-Sortie : `electron/dist/Telmi Sync R36 Setup 0.3.exe`  
+Sortie : `electron/dist/Telmi Sync R36 Setup 0.18.0.exe`  
 Publier l’installateur en **GitHub Release** (ne pas committer `electron/dist` ni un dossier `release/`).
 
 ## Ressources R36S embarquées
 
 ```
 extraResources/r36s/
-  flash-telmi-sd-win.ps1      # flash image (from-image / os-only) + expand TELMI
-  prepare-content-sd.ps1      # préparation SD contenu (mode multi)
-  telmi-sd-common.ps1         # helpers partagés
-  Select-Telmi-REV.ps1        # CLI équivalent à l’UI REV
-  content/autorun.inf         # seed TELMI (détection Telmi Sync)
-  boot/revs.json              # catalogue REV
-  boot/dtb/*.dtb              # DTB V20 / V30 Panel4
+  flash-telmi-sd-win.ps1           # flash (from-image / os-only) + expand TELMI
+  prepare-content-sd.ps1           # préparation SD contenu (mode multi)
+  telmi-sd-common.ps1              # helpers partagés
+  dtb-selector/
+    Select-SoysauceDTB.ps1         # apply DTB (mode Other)
+    boot.ini.template
+  Select-Telmi-REV.ps1             # CLI legacy REV
+  content/autorun.inf              # seed TELMI (détection Telmi Sync)
+  boot/revs.json                   # fallback legacy REV
+  boot/dtb/*.dtb
 ```
 
 ## Licence

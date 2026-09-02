@@ -87,9 +87,9 @@ function TelmiOSDetected ({telmiOS, onTransfer, children}) {
         </span>
         <span className={styles.telmiOSTitleIcons}>
             {
-              isR36s &&
+              isR36s && telmiOS.dtbSelectable &&
               <ButtonIconMicrochip className={styles.telmiOSTitleIcon}
-                                   title={getLocale('telmios-rev')}
+                                   title={getLocale('telmios-dtb')}
                                    onClick={onTelmiOSRev}/>
             }
             {

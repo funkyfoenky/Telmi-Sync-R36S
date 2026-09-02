@@ -18,7 +18,8 @@ function ModalTelmiOSRevForm({telmiOS, onClose}) {
     [catalog, setCatalog] = useState(null),
     [error, setError] = useState(null),
     [applying, setApplying] = useState(false),
-    [applyMsg, setApplyMsg] = useState(null)
+    [applyMsg, setApplyMsg] = useState(null),
+    isConsoleCatalog = catalog && catalog.catalogType === 'consoles'
 
   useElectronEmitter('telmios-rev-get', [telmiOS])
   useElectronListener(
@@ -46,10 +47,10 @@ function ModalTelmiOSRevForm({telmiOS, onClose}) {
         setApplyMsg(getLocale((result && result.error) || 'r36s-rev-apply-failed'))
         return
       }
-      setApplyMsg(getLocale('telmios-rev-apply-ok', result.rev.id))
+      setApplyMsg(getLocale(isConsoleCatalog ? 'telmios-dtb-apply-ok' : 'telmios-rev-apply-ok', result.rev.id))
       setCatalog((prev) => prev ? {...prev, current: result.rev.id} : prev)
     },
-    [getLocale]
+    [getLocale, isConsoleCatalog]
   )
 
   const options = (() => {
@@ -59,7 +60,7 @@ function ModalTelmiOSRevForm({telmiOS, onClose}) {
     return catalog.revs.map((r) => {
       const marks = []
       if (catalog.current && r.id === catalog.current) {
-        marks.push(getLocale('telmios-rev-current'))
+        marks.push(getLocale(isConsoleCatalog ? 'telmios-dtb-current' : 'telmios-rev-current'))
       }
       if (catalog.default && r.id === catalog.default) {
         marks.push(getLocale('telmios-rev-default'))
@@ -67,7 +68,7 @@ function ModalTelmiOSRevForm({telmiOS, onClose}) {
       const suffix = marks.length ? ' (' + marks.join(', ') + ')' : ''
       return {
         value: r.id,
-        text: r.id + ' — ' + (r.label || r.id) + suffix
+        text: (r.label || r.id) + suffix
       }
     })
   })()
@@ -75,7 +76,7 @@ function ModalTelmiOSRevForm({telmiOS, onClose}) {
   const defaultValue = (catalog && (catalog.current || catalog.default)) || (options[0] && options[0].value) || ''
 
   return <ModalLayoutPadded isClosable={true} onClose={onClose}>
-    <ModalTitle>{getLocale('telmios-rev-title')} :</ModalTitle>
+    <ModalTitle>{getLocale(isConsoleCatalog ? 'telmios-dtb-title' : 'telmios-rev-title')} :</ModalTitle>
     <Form>{
       (validation) => {
         return <>
@@ -91,8 +92,8 @@ function ModalTelmiOSRevForm({telmiOS, onClose}) {
             {
               catalog &&
               <>
-                <p>{getLocale('telmios-rev-hint')}</p>
-                <InputSelect label={getLocale('telmios-rev-select')}
+                <p>{getLocale(isConsoleCatalog ? 'telmios-dtb-hint' : 'telmios-rev-hint')}</p>
+                <InputSelect label={getLocale(isConsoleCatalog ? 'telmios-dtb-select' : 'telmios-rev-select')}
                              key={'telmios-rev-' + defaultValue + '-' + (catalog.current || '')}
                              id="telmios-rev-select"
                              required={true}
@@ -109,7 +110,7 @@ function ModalTelmiOSRevForm({telmiOS, onClose}) {
           {
             catalog && !error &&
             <ButtonsContainer>
-              <ButtonIconTextCheck text={getLocale('telmios-rev-apply')}
+              <ButtonIconTextCheck text={getLocale(isConsoleCatalog ? 'telmios-dtb-apply' : 'telmios-rev-apply')}
                                    rounded={true}
                                    disabled={applying}
                                    onClick={() => {

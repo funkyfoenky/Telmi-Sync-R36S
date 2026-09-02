@@ -3,7 +3,7 @@ import * as drivelist from 'drivelist'
 import {parseTelmiOSAutorun, parseTelmiOSR36sBoot, isTelmiOSR36sBootVolume} from './Helpers/InfFiles.js'
 import {readTelmiOSParameters, saveTelmiOSParameters} from './Helpers/TelmiOS.js'
 import {isSwitchMode, isR36sMode} from './Helpers/DeviceMode.js'
-import {getTelmiRevCatalog, applyTelmiRev} from './Helpers/TelmiOSRev.js'
+import {getTelmiRevCatalog, applyTelmiRev, enrichTelmiDeviceProfile} from './Helpers/TelmiOSRev.js'
 import runProcess from './Processes/RunProcess.js'
 import * as path from 'path'
 import * as fs from 'fs'
@@ -44,17 +44,25 @@ function mainEventTelmiOS(mainWindow) {
               label: bootTelmi.label,
               version: bootTelmi.version
             },
-            osOnly: true
+            osOnly: true,
+            imageProfile: bootTelmi.imageProfile,
+            dtbSelectable: bootTelmi.dtbSelectable
           })
         }
       }
     }
 
     if (contentDevice) {
+      if (r36sMode) {
+        contentDevice = await enrichTelmiDeviceProfile(contentDevice)
+      }
       mainWindow.webContents.send('telmios-data', contentDevice)
       return
     }
     if (bootDevice) {
+      if (r36sMode) {
+        bootDevice = await enrichTelmiDeviceProfile(bootDevice)
+      }
       mainWindow.webContents.send('telmios-data', bootDevice)
       return
     }
@@ -208,13 +216,14 @@ function mainEventTelmiOS(mainWindow) {
       }
       const drivePath = typeof drive === 'string' ? drive : drive.drive
       const sdLayout = (typeof drive === 'object' && drive.sdLayout === 'multi') ? 'multi' : 'mono'
+      const imageProfile = (typeof drive === 'object' && drive.imageProfile === 'other') ? 'other' : 'v20'
       if (!drivePath) {
         return
       }
       runProcess(
         mainWindow,
         path.join('TelmiOS', 'CardMaker.js'),
-        [drivePath, sdLayout],
+        [drivePath, sdLayout, imageProfile],
         () => {},
         (message, current, total) => {
           mainWindow.webContents.send('telmios-cardmaker-task', 'telmios-cardmaker', message, current, total)
@@ -302,7 +311,7 @@ function mainEventTelmiOS(mainWindow) {
           mainWindow.webContents.send('telmios-rev-apply-result', {ok: false, error: catalog.error})
           return
         }
-        const result = applyTelmiRev(catalog.bootRoot, revId)
+        const result = await applyTelmiRev(catalog.bootRoot, revId, catalog.catalogType)
         mainWindow.webContents.send('telmios-rev-apply-result', result)
       } catch (e) {
         mainWindow.webContents.send('telmios-rev-apply-result', {ok: false, error: 'r36s-rev-apply-failed'})

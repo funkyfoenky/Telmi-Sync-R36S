@@ -3,12 +3,11 @@ import * as path from 'path'
 import * as os from 'os'
 import {spawn} from 'child_process'
 import {downloadFile, requestJson} from '../../Helpers/Request.js'
+import {getR36sImageReleasesUrl, pickLatestStableRelease} from '../../Helpers/GitHubReleases.js'
 import {getExtraResourcesPath, initTmpPath} from '../Helpers/AppPaths.js'
 import {unpack} from '../BinFiles/7zipCommands.js'
 
 const PROGRESS_TOTAL = 100
-const R36S_RELEASE_LATEST =
-  'https://api.github.com/repos/funkyfoenky/Telmi-Story-Teller-R36S/releases/latest'
 
 /** Mappe STEP script -> (clé UI, borne basse %, borne haute %) */
 const SCRIPT_STEP_BOUNDS = {
@@ -40,11 +39,14 @@ const getBundledFlashScript = () => {
   return null
 }
 
-const getImagesDir = () => {
-  const dir = path.join(initTmpPath('r36s-images'))
+const getImagesDir = (imageProfile) => {
+  const profile = imageProfile === 'other' ? 'other' : 'v20'
+  const dir = path.join(initTmpPath('r36s-images'), profile)
   fs.mkdirSync(dir, {recursive: true})
   return dir
 }
+
+const normalizeImageProfile = (imageProfile) => (imageProfile === 'other' ? 'other' : 'v20')
 
 const unpackAsync = (zipPath, destPath) => new Promise((resolve, reject) => {
   unpack(zipPath, destPath, (error) => {
@@ -56,13 +58,28 @@ const unpackAsync = (zipPath, destPath) => new Promise((resolve, reject) => {
   })
 })
 
-const findImgAsset = (assets) => {
+const findImgAsset = (assets, imageProfile) => {
   if (!Array.isArray(assets)) {
     return null
+  }
+  if (imageProfile === 'other') {
+    return assets.find((a) => /soysauce-.*\.img\.gz$/i.test(a.name)) ||
+      assets.find((a) => /\.img\.gz$/i.test(a.name)) ||
+      assets.find((a) => /\.img\.zip$/i.test(a.name)) ||
+      assets.find((a) => /\.img$/i.test(a.name) && !/\.(zip|gz)$/i.test(a.name)) ||
+      null
   }
   return assets.find((a) => /\.img\.zip$/i.test(a.name)) ||
     assets.find((a) => /telmi-r36.*\.img/i.test(a.name) && /\.zip$/i.test(a.name)) ||
     null
+}
+
+const findExtractedImgPath = (imagesDir) => {
+  if (!fs.existsSync(imagesDir)) {
+    return null
+  }
+  const found = fs.readdirSync(imagesDir).find((f) => /\.img$/i.test(f))
+  return found ? path.join(imagesDir, found) : null
 }
 
 const emitProgress = (key, current, total = PROGRESS_TOTAL) => {
@@ -72,31 +89,37 @@ const emitProgress = (key, current, total = PROGRESS_TOTAL) => {
 const psSingleQuote = (s) => "'" + String(s).replace(/'/g, "''") + "'"
 
 /**
- * Télécharge l'image .img (zip) depuis la dernière release GitHub.
+ * Télécharge l'image .img depuis la dernière release stable GitHub (repo V20 ou Main).
  * @returns {Promise<string|null>} chemin absolu du .img
  */
-const ensureLatestImageFromGitHub = async () => {
+const ensureLatestImageFromGitHub = async (imageProfile) => {
+  const profile = normalizeImageProfile(imageProfile)
   emitProgress('r36s-step-download-check', 5)
 
-  let release
+  let releases
   try {
-    release = await requestJson(R36S_RELEASE_LATEST, {})
+    releases = await requestJson(getR36sImageReleasesUrl(profile), {})
   } catch (e) {
     process.stderr.write('r36s-image-download-error')
     return null
   }
 
-  const asset = findImgAsset(release.assets)
+  const release = pickLatestStableRelease(releases)
+  if (!release) {
+    process.stderr.write('r36s-image-download-error')
+    return null
+  }
+
+  const asset = findImgAsset(release.assets, profile)
   if (!asset || !asset.browser_download_url) {
     process.stderr.write('r36s-image-download-error')
     return null
   }
 
-  const imagesDir = getImagesDir()
-  const imgName = asset.name.replace(/\.zip$/i, '')
-  const imgPath = path.join(imagesDir, imgName)
-  if (fs.existsSync(imgPath) && fs.statSync(imgPath).size > 0) {
-    return imgPath
+  const imagesDir = getImagesDir(profile)
+  const existingImg = findExtractedImgPath(imagesDir)
+  if (existingImg && fs.statSync(existingImg).size > 0) {
+    return existingImg
   }
 
   try {
@@ -107,17 +130,17 @@ const ensureLatestImageFromGitHub = async () => {
     }
   } catch (e) {}
 
-  const zipPath = path.join(initTmpPath('download'), 'telmi-r36-latest.img.zip')
+  const archivePath = path.join(initTmpPath('download'), 'telmi-r36-' + profile + '-' + asset.name)
   try {
-    if (fs.existsSync(zipPath)) {
-      fs.unlinkSync(zipPath)
+    if (fs.existsSync(archivePath)) {
+      fs.unlinkSync(archivePath)
     }
   } catch (e) {}
 
   try {
     await downloadFile(
       asset.browser_download_url,
-      zipPath,
+      archivePath,
       (current, total) => {
         process.stdout.write('*downloading-files*' + current + '*' + total + '*')
       }
@@ -129,21 +152,22 @@ const ensureLatestImageFromGitHub = async () => {
 
   emitProgress('r36s-step-extract-image', 12)
   try {
-    await unpackAsync(zipPath, imagesDir)
+    if (/\.img$/i.test(asset.name) && !/\.(zip|gz)$/i.test(asset.name)) {
+      fs.copyFileSync(archivePath, path.join(imagesDir, asset.name))
+    } else {
+      await unpackAsync(archivePath, imagesDir)
+    }
   } catch (e) {
     process.stderr.write('r36s-image-extract-error')
     return null
   }
 
-  if (fs.existsSync(imgPath)) {
-    return imgPath
-  }
-  const found = fs.readdirSync(imagesDir).find((f) => /\.img$/i.test(f))
-  if (!found) {
+  const imgPath = findExtractedImgPath(imagesDir)
+  if (!imgPath) {
     process.stderr.write('r36s-image-extract-error')
     return null
   }
-  return path.join(imagesDir, found)
+  return imgPath
 }
 
 /**
@@ -172,17 +196,19 @@ const resolveDiskNumberFromLetter = (letter) => new Promise((resolve) => {
 
 /**
  * Flash GPT R36S via flash-telmi-sd-win.ps1 (Windows natif, sans WSL).
- * Image = latest release GitHub. Script = embarqué dans extraResources/r36s.
+ * Image = dernière release stable GitHub (pre-releases ignorées). Script = extraResources/r36s.
  * @param {string} drive ex. "E:\\" ou "E:"
  * @param {string} [sdLayout] 'mono' (from-image) | 'multi' (os-only)
+ * @param {string} [imageProfile] 'v20' | 'other'
  */
-async function main(drive, sdLayout = 'mono') {
+async function main(drive, sdLayout = 'mono', imageProfile = 'v20') {
   if (process.platform !== 'win32') {
     process.stderr.write('r36s-flash-windows-only')
     return
   }
 
   const layout = sdLayout === 'multi' ? 'multi' : 'mono'
+  const profile = normalizeImageProfile(imageProfile)
   const flashMode = layout === 'multi' ? 'os-only' : 'from-image'
 
   const letter = (drive || '').replace(/[^A-Za-z]/g, '').substring(0, 1).toUpperCase()
@@ -197,7 +223,7 @@ async function main(drive, sdLayout = 'mono') {
     return
   }
 
-  const imgPath = await ensureLatestImageFromGitHub()
+  const imgPath = await ensureLatestImageFromGitHub(profile)
   if (!imgPath) {
     return
   }
@@ -243,7 +269,7 @@ async function main(drive, sdLayout = 'mono') {
   }
 
   emitFlashLog('script=' + script)
-  emitFlashLog('layout=' + layout + ' flashMode=' + flashMode)
+  emitFlashLog('layout=' + layout + ' flashMode=' + flashMode + ' imageProfile=' + profile)
   emitFlashLog('letter=' + letter + ' diskNumber=' + diskNumber)
   emitFlashLog('image=' + imgPath)
   emitFlashLog('logFile=' + logFile)
@@ -261,6 +287,7 @@ async function main(drive, sdLayout = 'mono') {
       '-DiskNumber', String(diskNumber),
       '-Mode', flashMode,
       '-ImagePath', imgPath,
+      '-ImageProfile', profile,
       '-Yes',
       '-LogFile', logFile,
       '-ProgressFile', progressFile

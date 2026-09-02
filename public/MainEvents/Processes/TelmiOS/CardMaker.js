@@ -91,10 +91,10 @@ async function mainMiyoo(drive) {
   )
 }
 
-async function main(drive, sdLayout) {
+async function main(drive, sdLayout, imageProfile) {
   const mode = getTelmiSyncParams().deviceMode
   if (mode === 'r36s') {
-    mainR36s(drive, sdLayout).catch((e) => process.stderr.write((e && e.toString()) || 'r36s-flash-failed'))
+    mainR36s(drive, sdLayout, imageProfile).catch((e) => process.stderr.write((e && e.toString()) || 'r36s-flash-failed'))
     return
   }
   await mainMiyoo(drive)
@@ -105,5 +105,5 @@ const _params_ = getProcessParams()
 if (_params_.length === 0) {
   process.stderr.write('device-not-found')
 } else {
-  main(_params_[0], _params_[1] || 'mono').catch((e) => process.stderr.write(e.toString()))
+  main(_params_[0], _params_[1] || 'mono', _params_[2] || 'v20').catch((e) => process.stderr.write(e.toString()))
 }

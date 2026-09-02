@@ -1,0 +1,17 @@
+odroidgoa-uboot-config
+
+########################################################################
+# Telmi-os 0.2.3 -- LF only (no CR). Pas d'uInitrd.
+########################################################################
+
+# Boot Arguments
+setenv bootargs "@@BOOTARGS@@"
+
+# Booting
+setenv loadaddr "0x02000000"
+setenv dtb_loadaddr "0x01f00000"
+
+load mmc 1:1 ${loadaddr} Image
+load mmc 1:1 ${dtb_loadaddr} @@DTB@@
+
+booti ${loadaddr} - ${dtb_loadaddr}

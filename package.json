@@ -1,7 +1,7 @@
 {
   "name": "telmi-sync",
   "description": "Desktop application to sync stories, music and games with TelmiOS on R36S (and Miyoo).",
-  "version": "0.3.0",
+  "version": "0.18.0",
   "author": {
     "name": "Franck ALARY",
     "url": "http://dantsu.com/"
@@ -53,7 +53,7 @@
   "build": {
     "appId": "com.dantsu.telmisync",
     "productName": "Telmi Sync R36",
-    "artifactName": "${productName} Setup 0.3.${ext}",
+    "artifactName": "${productName} Setup ${version}.${ext}",
     "mac": {
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Access to your microphone is needed for record your voice",
