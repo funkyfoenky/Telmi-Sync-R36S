@@ -1,7 +1,7 @@
 {
   "name": "telmi-sync",
   "description": "Desktop application to sync stories, music and games with TelmiOS on R36S (and Miyoo).",
-  "version": "0.18.0",
+  "version": "0.18.5",
   "author": {
     "name": "Franck ALARY",
     "url": "http://dantsu.com/"

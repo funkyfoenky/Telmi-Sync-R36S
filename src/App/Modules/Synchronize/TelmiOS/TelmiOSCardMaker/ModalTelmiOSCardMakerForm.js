@@ -15,6 +15,14 @@ import ModalTelmiOSCardMakerConfirm from './ModalTelmiOSCardMakerConfirm.js'
 
 const toGigabytes = (bytes) => (bytes / 1073741824).toFixed(2)
 
+const formatDriveOption = (drive, getLocale) => {
+  const letter = (drive.drive || '').replace(/\\$/, '').replace(/:$/, '')
+  const label = letter
+    ? letter + ':'
+    : getLocale('telmios-cardmaker-physical-disk', drive.diskNumber)
+  return label + ' — ' + drive.name + ' (' + toGigabytes(drive.size) + getLocale('gb') + ')'
+}
+
 function ModalTelmiOSCardMakerForm({onClose}) {
   const
     {getLocale} = useLocale(),
@@ -88,7 +96,7 @@ function ModalTelmiOSCardMakerForm({onClose}) {
                            {value: '', text: ''},
                            ...drives.map((drive, keyDrive) => ({
                              value: keyDrive,
-                             text: drive.drive + ' ' + drive.name + ' (' + toGigabytes(drive.size) + getLocale('gb') + ')'
+                             text: formatDriveOption(drive, getLocale)
                            }))
                          ]}
                          ref={inputRefDrive}/>

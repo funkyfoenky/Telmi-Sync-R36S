@@ -48,6 +48,30 @@ const getImagesDir = (imageProfile) => {
 
 const normalizeImageProfile = (imageProfile) => (imageProfile === 'other' ? 'other' : 'v20')
 
+/** Deduit le code d'erreur UI a partir du log PowerShell (TELMI_ERROR ou message ERREUR). */
+const inferFlashErrorFromLog = (logFile) => {
+  try {
+    if (!logFile || !fs.existsSync(logFile)) {
+      return 'r36s-flash-failed'
+    }
+    const content = fs.readFileSync(logFile, 'utf8')
+    const telmiErr = content.match(/TELMI_ERROR:(r36s-[\w-]+)/)
+    if (telmiErr) {
+      return telmiErr[1]
+    }
+    if (/ACCESS_DENIED|Explorateur|volume remonte/i.test(content)) {
+      return 'r36s-flash-access-denied'
+    }
+    if (/Pas de GPT|GPT primaire|GPT secondaire/i.test(content)) {
+      return 'r36s-flash-gpt-failed'
+    }
+    if (/WriteFile echoue/i.test(content)) {
+      return 'r36s-flash-write-failed'
+    }
+  } catch (e) {}
+  return 'r36s-flash-failed'
+}
+
 const unpackAsync = (zipPath, destPath) => new Promise((resolve, reject) => {
   unpack(zipPath, destPath, (error) => {
     if (error) {
@@ -197,11 +221,12 @@ const resolveDiskNumberFromLetter = (letter) => new Promise((resolve) => {
 /**
  * Flash GPT R36S via flash-telmi-sd-win.ps1 (Windows natif, sans WSL).
  * Image = dernière release stable GitHub (pre-releases ignorées). Script = extraResources/r36s.
- * @param {string} drive ex. "E:\\" ou "E:"
+ * @param {string} drive ex. "E:\\" ou "E:" (optionnel si diskNumberParam)
  * @param {string} [sdLayout] 'mono' (from-image) | 'multi' (os-only)
  * @param {string} [imageProfile] 'v20' | 'other'
+ * @param {string|number} [diskNumberParam] numéro PhysicalDrive Windows (prioritaire)
  */
-async function main(drive, sdLayout = 'mono', imageProfile = 'v20') {
+async function main(drive, sdLayout = 'mono', imageProfile = 'v20', diskNumberParam = '') {
   if (process.platform !== 'win32') {
     process.stderr.write('r36s-flash-windows-only')
     return
@@ -212,8 +237,12 @@ async function main(drive, sdLayout = 'mono', imageProfile = 'v20') {
   const flashMode = layout === 'multi' ? 'os-only' : 'from-image'
 
   const letter = (drive || '').replace(/[^A-Za-z]/g, '').substring(0, 1).toUpperCase()
-  if (!letter) {
-    process.stderr.write('device-not-found')
+  let diskNumber = parseInt(String(diskNumberParam || '').trim(), 10)
+  if (!Number.isFinite(diskNumber) && letter) {
+    diskNumber = await resolveDiskNumberFromLetter(letter)
+  }
+  if (!Number.isFinite(diskNumber) || diskNumber < 0) {
+    process.stderr.write('r36s-disk-not-found')
     return
   }
 
@@ -229,11 +258,6 @@ async function main(drive, sdLayout = 'mono', imageProfile = 'v20') {
   }
 
   emitProgress('r36s-step-prepare', 18)
-  const diskNumber = await resolveDiskNumberFromLetter(letter)
-  if (diskNumber === null || diskNumber < 0) {
-    process.stderr.write('r36s-disk-not-found')
-    return
-  }
 
   const stamp = Date.now()
   const exitFile = path.join(os.tmpdir(), 'telmi-r36-exit-' + stamp + '.txt')
@@ -392,7 +416,7 @@ async function main(drive, sdLayout = 'mono', imageProfile = 'v20') {
       emitProgress('r36s-step-done', PROGRESS_TOTAL)
       process.stdout.write('success')
     } else {
-      process.stderr.write('r36s-flash-failed')
+      process.stderr.write(inferFlashErrorFromLog(logFile))
     }
   }
 

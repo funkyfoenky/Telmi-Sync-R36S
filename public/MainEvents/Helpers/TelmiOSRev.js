@@ -49,8 +49,6 @@ const getBundledDtbScript = () => {
   return fs.existsSync(bundled) ? bundled : null
 }
 
-const psSingleQuote = (s) => "'" + String(s).replace(/'/g, "''") + "'"
-
 /**
  * Copie revs.json + dtb/*.dtb depuis extraResources si absents sur BOOT (legacy).
  */
@@ -289,57 +287,159 @@ function applyTelmiRevLegacy(bootRoot, revId) {
   return {ok: true, rev: {id: rev.id, label: rev.label, audio_path: rev.audio_path || 'SPK'}}
 }
 
-const applyConsolePack = (bootRoot, packName) => new Promise((resolve) => {
-  const script = getBundledDtbScript()
-  if (!script || !bootRoot || !packName) {
-    resolve({ok: false, error: 'r36s-dtb-missing'})
-    return
+const TELMI_BOOTARGS =
+  'root=/dev/mmcblk0p2 rootwait rw fsck.mode=skip net.ifnames=0 fbcon=map:9 vt.global_cursor_default=0 ' +
+  'console=/dev/ttyFIQ0 quiet loglevel=3 nosplash plymouth.enable=0 consoleblank=0 systemd.show_status=false ' +
+  'max_cpufreq=1296 boot_cpufreq=1248 max_gpufreq=520 max_ddrfreq=666'
+
+const DTB_ALIASES = [
+  'rk3326-odroidgo3-linux.dtb',
+  'rk3326-odroidgo2-linux.dtb',
+  'rk3326-odroidgo2-linux-v11.dtb',
+  'rk-kernel.dtb'
+]
+
+const getBundledBootIniTemplate = () => {
+  const p = path.join(getExtraResourcesPath(), 'r36s', 'dtb-selector', 'boot.ini.template')
+  return fs.existsSync(p) ? p : null
+}
+
+/**
+ * Applique un pack consoles/ en Node (sans UAC) — plus fiable que Start-Process -Verb RunAs.
+ */
+function applyConsolePackNode(bootRoot, packName) {
+  const root = withSep(bootRoot)
+  const packDir = path.join(root, 'consoles', packName)
+  if (!fs.existsSync(packDir)) {
+    return {ok: false, error: 'r36s-dtb-missing'}
   }
 
-  const stamp = Date.now()
-  const exitFile = path.join(os.tmpdir(), 'telmi-r36-dtb-exit-' + stamp + '.txt')
-  const logFile = path.join(os.tmpdir(), 'telmi-r36-dtb-' + stamp + '.log')
+  let dtbName = null
+  const packIni = path.join(packDir, 'boot.ini')
+  if (fs.existsSync(packIni)) {
+    const m = fs.readFileSync(packIni, 'utf8').match(/load mmc 1:1 \$\{dtb_loadaddr\} (\S+\.dtb)/)
+    if (m) {
+      dtbName = m[1]
+    }
+  }
+  if (!dtbName) {
+    const dtbFile = fs.readdirSync(packDir).find((n) => /\.dtb$/i.test(n) && !/uboot/i.test(n))
+    if (dtbFile) {
+      dtbName = dtbFile
+    }
+  }
+  if (!dtbName) {
+    return {ok: false, error: 'r36s-dtb-missing'}
+  }
 
-  const elevateScript =
-    '$ErrorActionPreference = "Stop"; ' +
-    '$p = Start-Process -FilePath "powershell.exe" -Verb RunAs -Wait -PassThru ' +
-    '-WindowStyle Hidden -ArgumentList @(' +
-    [
+  const copied = []
+  try {
+    for (const name of fs.readdirSync(packDir)) {
+      if (!/\.dtb$/i.test(name)) {
+        continue
+      }
+      fs.copyFileSync(path.join(packDir, name), path.join(root, name))
+      copied.push(name)
+    }
+
+    const srcDtb = fs.existsSync(path.join(packDir, dtbName))
+      ? path.join(packDir, dtbName)
+      : path.join(root, dtbName)
+    if (fs.existsSync(srcDtb)) {
+      for (const alias of DTB_ALIASES) {
+        fs.copyFileSync(srcDtb, path.join(root, alias))
+      }
+    }
+
+    let template
+    const tplPath = getBundledBootIniTemplate()
+    if (tplPath) {
+      template = fs.readFileSync(tplPath, 'utf8')
+    } else {
+      template =
+        'odroidgoa-uboot-config\n\nsetenv bootargs "@@BOOTARGS@@"\n\n' +
+        'setenv loadaddr "0x02000000"\nsetenv dtb_loadaddr "0x01f00000"\n\n' +
+        'load mmc 1:1 ${loadaddr} Image\nload mmc 1:1 ${dtb_loadaddr} @@DTB@@\n\n' +
+        'booti ${loadaddr} - ${dtb_loadaddr}\n'
+    }
+    const ini = template
+      .replace(/@@BOOTARGS@@/g, TELMI_BOOTARGS)
+      .replace(/@@DTB@@/g, dtbName)
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .trimEnd() + '\n'
+    fs.writeFileSync(path.join(root, 'boot.ini'), ini, 'ascii')
+
+    const consoleSrc = path.join(packDir, '.console')
+    if (fs.existsSync(consoleSrc)) {
+      fs.copyFileSync(consoleSrc, path.join(root, '.console'))
+    } else {
+      fs.writeFileSync(path.join(root, '.console'), packName + '\n', 'ascii')
+    }
+
+    const log =
+      'date=' + new Date().toISOString() + '\n' +
+      'pack=' + packName + '\n' +
+      'dtb=' + dtbName + '\n' +
+      'copied=' + copied.join(',') + '\n' +
+      'bootargs=telmi-os (no uInitrd)\n'
+    fs.writeFileSync(path.join(root, 'TELMI-DTB-SELECT.txt'), log, 'ascii')
+  } catch (e) {
+    return {ok: false, error: 'r36s-rev-apply-failed', detail: (e && e.message) || String(e)}
+  }
+
+  return {ok: true, rev: {id: packName, label: packName}}
+}
+
+const applyConsolePack = (bootRoot, packName) => {
+  if (!bootRoot || !packName) {
+    return Promise.resolve({ok: false, error: 'r36s-dtb-missing'})
+  }
+
+  // 1) Essai direct Node (pas d'UAC) — cas normal sur volume BOOT FAT monté
+  const nodeResult = applyConsolePackNode(bootRoot, packName)
+  if (nodeResult.ok) {
+    return Promise.resolve(nodeResult)
+  }
+
+  // 2) Fallback PowerShell sans élévation (si Node a échoué pour une raison de droits)
+  const script = getBundledDtbScript()
+  if (!script) {
+    return Promise.resolve(nodeResult)
+  }
+
+  return new Promise((resolve) => {
+    const bootArg = withSep(bootRoot).replace(/[\\/]+$/, '') + '\\'
+    const logFile = path.join(os.tmpdir(), 'telmi-r36-dtb-' + Date.now() + '.log')
+    const args = [
       '-NoProfile',
       '-WindowStyle', 'Hidden',
       '-ExecutionPolicy', 'Bypass',
       '-File', script,
       '-PackName', packName,
-      '-BootRoot', bootRoot.replace(/\\$/, '')
-    ].map(psSingleQuote).join(',') +
-    '); ' +
-    'if ($null -eq $p) { Set-Content -Path ' + psSingleQuote(exitFile) + ' -Value "1" -Encoding ASCII } ' +
-    'else { Set-Content -Path ' + psSingleQuote(exitFile) + ' -Value ([string]$p.ExitCode) -Encoding ASCII }'
-
-  const child = spawn(
-    'powershell.exe',
-    ['-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-Command', elevateScript],
-    {windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']}
-  )
-
-  child.on('error', () => resolve({ok: false, error: 'r36s-rev-apply-failed'}))
-  child.on('exit', () => {
-    setTimeout(() => {
-      let code = 1
-      try {
-        if (fs.existsSync(exitFile)) {
-          code = parseInt(fs.readFileSync(exitFile, 'utf8').trim(), 10)
-        }
-      } catch (e) {}
-      try { fs.unlinkSync(exitFile) } catch (e) {}
+      '-BootRoot', bootArg
+    ]
+    const child = spawn('powershell.exe', args, {windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']})
+    let err = ''
+    child.stderr.on('data', (d) => { err += d.toString() })
+    child.stdout.on('data', (d) => { err += d.toString() })
+    child.on('error', () => resolve(nodeResult.ok ? nodeResult : {ok: false, error: 'r36s-rev-apply-failed'}))
+    child.on('exit', (code) => {
       if (code === 0) {
         resolve({ok: true, rev: {id: packName, label: packName}})
-      } else {
-        resolve({ok: false, error: 'r36s-rev-apply-failed'})
+        return
       }
-    }, 300)
+      try {
+        fs.writeFileSync(logFile, err || ('exit=' + code), 'utf8')
+      } catch (e) {}
+      resolve({
+        ok: false,
+        error: 'r36s-rev-apply-failed',
+        detail: (err || nodeResult.detail || '').trim().slice(0, 300)
+      })
+    })
   })
-})
+}
 
 /**
  * Applique une REV legacy ou un pack DTB Other.

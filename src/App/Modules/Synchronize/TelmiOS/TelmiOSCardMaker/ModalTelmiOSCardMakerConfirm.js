@@ -13,12 +13,22 @@ function ModalTelmiOSCardMakerConfirm({drive, onClose}) {
     isR36s = params && params.deviceMode === 'r36s',
     isMulti = isR36s && drive.sdLayout === 'multi',
     isOther = isR36s && drive.imageProfile === 'other',
-    driveLabel = '<strong>' + drive.drive + ' (' + drive.name + ')</strong>',
+    driveDisplay = (() => {
+      const letter = (drive.drive || '').replace(/\\$/, '').replace(/:$/, '')
+      if (letter) {
+        return letter + ':'
+      }
+      if (Number.isFinite(drive.diskNumber)) {
+        return getLocale('telmios-cardmaker-physical-disk', drive.diskNumber)
+      }
+      return drive.drive || '?'
+    })(),
+    driveLabel = '<strong>' + driveDisplay + ' (' + drive.name + ')</strong>',
     title = !isR36s
-      ? getLocale('telmios-cardmaker-alert', drive.drive)
+      ? getLocale('telmios-cardmaker-alert', driveDisplay)
       : (isMulti
-        ? getLocale('telmios-cardmaker-alert-r36s-multi', drive.drive)
-        : getLocale('telmios-cardmaker-alert-r36s', drive.drive)),
+        ? getLocale('telmios-cardmaker-alert-r36s-multi', driveDisplay)
+        : getLocale('telmios-cardmaker-alert-r36s', driveDisplay)),
     message = !isR36s
       ? getLocale('telmios-cardmaker-alert-message', driveLabel)
       : (isMulti

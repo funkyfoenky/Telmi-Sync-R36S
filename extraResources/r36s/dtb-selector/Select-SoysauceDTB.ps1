@@ -10,17 +10,24 @@ $ErrorActionPreference = 'Stop'
 $TelmiBootargs = 'root=/dev/mmcblk0p2 rootwait rw fsck.mode=skip net.ifnames=0 fbcon=map:9 vt.global_cursor_default=0 console=/dev/ttyFIQ0 quiet loglevel=3 nosplash plymouth.enable=0 consoleblank=0 systemd.show_status=false max_cpufreq=1296 boot_cpufreq=1248 max_gpufreq=520 max_ddrfreq=666'
 
 function Find-BootRoot {
-    if ($BootRoot -and (Test-Path (Join-Path $BootRoot 'boot.ini'))) {
-        return $BootRoot.TrimEnd('\')
+    if ($BootRoot) {
+        $root = $BootRoot.TrimEnd('\')
+        if ($root -match '^[A-Za-z]:$') { $root = $root + '\' }
+        elseif ($root -notmatch '[\\/]$') { $root = $root + '\' }
+        $rootTrim = $root.TrimEnd('\')
+        if ((Test-Path (Join-Path $root 'consoles')) -or (Test-Path (Join-Path $root 'boot.ini')) -or (Test-Path (Join-Path $root 'Image'))) {
+            return $rootTrim
+        }
     }
     $here = $PSScriptRoot
     if (Test-Path (Join-Path $here 'consoles')) { return $here }
     foreach ($d in Get-PSDrive -PSProvider FileSystem) {
         $c = Join-Path $d.Root 'consoles'
         $b = Join-Path $d.Root 'boot.ini'
-        if ((Test-Path $c) -and (Test-Path $b)) { return $d.Root.TrimEnd('\') }
+        $img = Join-Path $d.Root 'Image'
+        if ((Test-Path $c) -and ((Test-Path $b) -or (Test-Path $img))) { return $d.Root.TrimEnd('\') }
     }
-    throw "Partition BOOT introuvable (pas de consoles\ + boot.ini)."
+    throw "Partition BOOT introuvable (pas de consoles\ + boot.ini/Image)."
 }
 
 function Get-ConsolePacks {

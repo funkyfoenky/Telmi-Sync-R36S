@@ -3,6 +3,7 @@ import * as drivelist from 'drivelist'
 import {parseTelmiOSAutorun, parseTelmiOSR36sBoot, isTelmiOSR36sBootVolume} from './Helpers/InfFiles.js'
 import {readTelmiOSParameters, saveTelmiOSParameters} from './Helpers/TelmiOS.js'
 import {isSwitchMode, isR36sMode} from './Helpers/DeviceMode.js'
+import {listR36sFlashDisks} from './Helpers/R36sDiskList.js'
 import {getTelmiRevCatalog, applyTelmiRev, enrichTelmiDeviceProfile} from './Helpers/TelmiOSRev.js'
 import runProcess from './Processes/RunProcess.js'
 import * as path from 'path'
@@ -16,7 +17,13 @@ function checkDiskUsage(drive) {
 }
 
 function mainEventTelmiOS(mainWindow) {
+  /** Pendant un flash R36S, ne pas scanner les volumes (evite remontage / ACCESS_DENIED). */
+  let usbPollPaused = false
+
   const checkUsbDevices = async () => {
+    if (usbPollPaused) {
+      return
+    }
     const drives = (await drivelist.list()).reduce((acc, d) => [...acc, ...d.mountpoints.map((p) => p.path)], [])
     const switchMode = isSwitchMode()
     const r36sMode = isR36sMode()
@@ -80,6 +87,10 @@ function mainEventTelmiOS(mainWindow) {
   ipcMain.on(
     'telmios-disklist',
     async (event) => {
+      if (isR36sMode() && process.platform === 'win32') {
+        mainWindow.webContents.send('telmios-disklist-data', await listR36sFlashDisks())
+        return
+      }
       mainWindow.webContents.send(
         'telmios-disklist-data',
         (await drivelist.list())
@@ -214,16 +225,18 @@ function mainEventTelmiOS(mainWindow) {
       if (drive === undefined || drive === null) {
         return
       }
-      const drivePath = typeof drive === 'string' ? drive : drive.drive
+      const drivePath = typeof drive === 'string' ? drive : (drive.drive || '')
       const sdLayout = (typeof drive === 'object' && drive.sdLayout === 'multi') ? 'multi' : 'mono'
       const imageProfile = (typeof drive === 'object' && drive.imageProfile === 'other') ? 'other' : 'v20'
-      if (!drivePath) {
+      const diskNumber = (typeof drive === 'object' && Number.isFinite(drive.diskNumber)) ? String(drive.diskNumber) : ''
+      if (!drivePath && !diskNumber) {
         return
       }
+      usbPollPaused = true
       runProcess(
         mainWindow,
         path.join('TelmiOS', 'CardMaker.js'),
-        [drivePath, sdLayout, imageProfile],
+        [drivePath, sdLayout, imageProfile, diskNumber],
         () => {},
         (message, current, total) => {
           mainWindow.webContents.send('telmios-cardmaker-task', 'telmios-cardmaker', message, current, total)
@@ -239,6 +252,7 @@ function mainEventTelmiOS(mainWindow) {
           )
         },
         () => {
+          usbPollPaused = false
           mainWindow.webContents.send('telmios-cardmaker-task', '', '', 0, 0)
           checkUsbDevices()
         }

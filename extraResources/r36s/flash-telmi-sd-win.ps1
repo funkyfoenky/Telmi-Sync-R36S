@@ -7,7 +7,7 @@
 #
 # Modes :
 #   from-image  ecrit LATEST.img puis recree TELMI sur tout l'espace restant (single-SD legacy)
-#   os-only     flash OS sans expand p3 (dual-SD : contenu sur slot gauche)
+#   os-only     flash OS puis SUPPRIME p3+ TELMI (dual-SD : contenu sur slot gauche)
 #   expand      recree seulement p3 TELMI (apres Rufus / flash partiel)
 
 #Requires -RunAsAdministrator
@@ -294,8 +294,26 @@ function Get-GptHeaderCrc([byte[]]$hdr) {
     return (Get-Crc32 $slice)
 }
 
+function Test-ImageHasGpt([string]$imgPath) {
+    if (-not $imgPath -or -not (Test-Path -LiteralPath $imgPath)) { return $false }
+    $fs = $null
+    try {
+        $fs = [System.IO.File]::OpenRead($imgPath)
+        if ($fs.Length -lt 1024) { return $false }
+        $hdr = New-Object byte[] 512
+        $null = $fs.Seek(512L, [System.IO.SeekOrigin]::Begin)
+        if ($fs.Read($hdr, 0, 512) -ne 512) { return $false }
+        return ([Text.Encoding]::ASCII.GetString($hdr, 0, 8) -eq 'EFI PART')
+    } catch {
+        return $false
+    } finally {
+        if ($fs) { $fs.Close() }
+    }
+}
+
 function Repair-GptAlternate([int]$diskNum, [int64]$diskBytes) {
-    # Relocalise le GPT secondaire en fin de disque (equiv. sgdisk -e)
+    # Relocalise le GPT secondaire en fin de disque (equiv. sgdisk -e).
+    # Images MBR (ex. soysauce / Other) : rien a faire.
     $sectorSize = 512L
     $lastLba = [int64]($diskBytes / $sectorSize) - 1L
     if ($lastLba -lt 100) { throw 'Disque trop petit pour GPT' }
@@ -309,6 +327,23 @@ function Repair-GptAlternate([int]$diskNum, [int64]$diskBytes) {
         if (-not [TelmiDiskIO]::ReadFile($h, $mbr, 512, [ref]$br, [IntPtr]::Zero) -or $br -ne 512) {
             throw 'Lecture MBR incomplete'
         }
+
+        $hdr = New-Object byte[] 512
+        [void][TelmiDiskIO]::SetFilePointerEx($h, $sectorSize, [ref]$np, 0)
+        if (-not [TelmiDiskIO]::ReadFile($h, $hdr, 512, [ref]$br, [IntPtr]::Zero) -or $br -ne 512) {
+            throw 'Lecture GPT primaire incomplete'
+        }
+        $sig = [Text.Encoding]::ASCII.GetString($hdr, 0, 8)
+        if ($sig -ne 'EFI PART') {
+            # Protective/classical MBR without GPT (soysauce ArkOS-style, etc.)
+            if ($mbr[510] -eq 0x55 -and $mbr[511] -eq 0xAA) {
+                Write-Host '  Image MBR detectee (pas de GPT) - correction GPT ignoree' -ForegroundColor Yellow
+                return
+            }
+            throw "Pas de GPT primaire ($sig)"
+        }
+
+        # Protective MBR : ajuster la taille de la partition unique pour couvrir le disque
         if ($mbr[510] -eq 0x55 -and $mbr[511] -eq 0xAA) {
             # MBR : taille 32-bit. Eviter 0xFFFFFFFF (PS = Int32 -1 -> cast UInt64 impossible)
             if ($lastLba -gt 4294967295L) { $partSize = [uint32]::MaxValue }
@@ -321,14 +356,6 @@ function Repair-GptAlternate([int]$diskNum, [int64]$diskBytes) {
                 throw ("Ecriture MBR Win32=" + [Runtime.InteropServices.Marshal]::GetLastWin32Error())
             }
         }
-
-        $hdr = New-Object byte[] 512
-        [void][TelmiDiskIO]::SetFilePointerEx($h, $sectorSize, [ref]$np, 0)
-        if (-not [TelmiDiskIO]::ReadFile($h, $hdr, 512, [ref]$br, [IntPtr]::Zero) -or $br -ne 512) {
-            throw 'Lecture GPT primaire incomplete'
-        }
-        $sig = [Text.Encoding]::ASCII.GetString($hdr, 0, 8)
-        if ($sig -ne 'EFI PART') { throw "Pas de GPT primaire ($sig)" }
 
         $entryStart = [BitConverter]::ToInt64($hdr, 72)
         $numEntries = [BitConverter]::ToUInt32($hdr, 80)
@@ -459,6 +486,54 @@ function Write-ImageToPhysicalDrive([string]$imgPath, [int]$diskNum, [int64]$dis
             try { [void][TelmiDiskIO]::CloseHandle($h) } catch {}
         }
     }
+}
+
+function Remove-OsOnlyContentPartitions([int]$diskNum) {
+    Write-TelmiProgress 'cleanup'
+    Write-Host '==> Mode os-only : suppression partition(s) contenu/TELMI (p3+)...'
+    Update-Disk -Number $diskNum -EA SilentlyContinue
+    Start-Sleep -Seconds 1
+
+    $toRemove = @(Get-Partition -DiskNumber $diskNum -EA SilentlyContinue |
+        Where-Object { $_.PartitionNumber -ge 3 } |
+        Sort-Object PartitionNumber -Descending)
+
+    if ($toRemove.Count -eq 0) {
+        Write-Host '  Aucune p3+ a supprimer'
+        return
+    }
+
+    foreach ($part in $toRemove) {
+        $pn = $part.PartitionNumber
+        $dl = $part.DriveLetter
+        Write-Host ("  supprime partition {0} ({1})" -f $pn, (Format-SizeGB ([int64]$part.Size)))
+        try {
+            if ($dl) {
+                try { [TelmiDiskIO]::LockAndDismountLetter([char]$dl) } catch {}
+                try { mountvol ("{0}:" -f $dl) /D 2>$null } catch {}
+            }
+            Remove-Partition -DiskNumber $diskNum -PartitionNumber $pn -Confirm:$false -EA Stop
+        } catch {
+            Write-Host ("  WARN Remove-Partition p{0}: {1}  -  essai diskpart..." -f $pn, $_.Exception.Message)
+            $out = @"
+select disk $diskNum
+select partition $pn
+delete partition override
+"@ | diskpart 2>&1 | Out-String
+            if ($out -match 'error|erreur|failed') {
+                Write-Host $out
+                throw ("Impossible de supprimer la partition $pn (TELMI) en mode os-only")
+            }
+        }
+    }
+    Start-Sleep -Seconds 1
+    'rescan' | diskpart | Out-Null
+    Update-Disk -Number $diskNum -EA SilentlyContinue
+    $left = @(Get-Partition -DiskNumber $diskNum -EA SilentlyContinue | Where-Object { $_.PartitionNumber -ge 3 })
+    if ($left.Count -gt 0) {
+        throw ("Partitions p3+ encore presentes apres suppression : " + (($left | ForEach-Object { $_.PartitionNumber }) -join ','))
+    }
+    Write-Host '  SD OS = BOOT + root uniquement (contenu sur slot gauche)'
 }
 
 function Expand-TelmiPartition([int]$diskNum) {
@@ -662,16 +737,27 @@ Write-TelmiProgress 'prepare'
 Write-Host '==> Preparation disque...'
 Set-TelmiAutomount -enable $false
 $script:FlashOk = $false
+$volLocks = $null
 try {
     try { Set-Disk -Number $diskNum -IsReadOnly $false -EA SilentlyContinue } catch {}
     Set-TelmiDiskOffline -num $diskNum -offline $false
 
     if ($Mode -in @('from-image', 'os-only')) {
         Clear-TelmiDisk -num $diskNum
+        # Verrou persistant + disque offline : empeche Windows/Explorateur de remonter la SD pendant l'ecriture
+        $volLocks = Lock-DiskVolumesPersistent -num $diskNum
+        Set-TelmiDiskOffline -num $diskNum -offline $true
         Write-ImageToPhysicalDrive -imgPath $img -diskNum $diskNum -diskBytes ([int64]$disk.Size)
         Write-TelmiProgress 'gpt'
-        Write-Host '==> Correction GPT (sgdisk -e equivalent)...'
-        Repair-GptAlternate -diskNum $diskNum -diskBytes ([int64]$disk.Size)
+        if (Test-ImageHasGpt -imgPath $img) {
+            Write-Host '==> Correction GPT (sgdisk -e equivalent)...'
+            # GPT repair AVANT remise online : sinon Windows invalide le GPT (image plus petite que le disque)
+            Repair-GptAlternate -diskNum $diskNum -diskBytes ([int64]$disk.Size)
+        } else {
+            Write-Host '==> Image MBR (Other/soysauce) : pas de correction GPT' -ForegroundColor Yellow
+            Repair-GptAlternate -diskNum $diskNum -diskBytes ([int64]$disk.Size)
+        }
+        Set-TelmiDiskOffline -num $diskNum -offline $false
     } else {
         # expand seul : ne pas clean  -  juste GPT + recreate TELMI
         Dismount-DiskVolumes -num $diskNum
@@ -681,6 +767,7 @@ try {
     }
     $script:FlashOk = $true
 } finally {
+    if ($volLocks) { Unlock-DiskVolumesPersistent $volLocks }
     Set-TelmiDiskOffline -num $diskNum -offline $false
     Set-TelmiAutomount -enable $true
 }
@@ -697,8 +784,10 @@ try { $null = Get-Partition -DiskNumber $diskNum } catch {}
 
 if ($Mode -eq 'expand' -or $Mode -eq 'from-image') {
     Expand-TelmiPartition -diskNum $diskNum
+} elseif ($Mode -eq 'os-only') {
+    Remove-OsOnlyContentPartitions -diskNum $diskNum
 } else {
-    Write-Host ' Mode os-only : pas d expand p3 (contenu sur slot gauche via Prepare-Content-SD.bat)' -ForegroundColor Yellow
+    Write-Host ' Mode inconnu : pas de post-traitement partitions' -ForegroundColor Yellow
 }
 
 if ($Mode -in @('from-image', 'os-only') -and $ImageProfile) {
@@ -726,7 +815,15 @@ if ($Mode -eq 'os-only') {
 }
 Write-Host '============================================================' -ForegroundColor Green
 } catch {
-    Write-Host ("ERREUR: {0}" -f $_.Exception.Message) -ForegroundColor Red
+    $errMsg = $_.Exception.Message
+    Write-Host ("ERREUR: {0}" -f $errMsg) -ForegroundColor Red
+    if ($errMsg -match 'ACCESS_DENIED|Explorateur|volume remonte') {
+        Write-Host 'TELMI_ERROR:r36s-flash-access-denied'
+    } elseif ($errMsg -match 'WriteFile echoue') {
+        Write-Host 'TELMI_ERROR:r36s-flash-write-failed'
+    } elseif ($errMsg -match 'GPT|Pas de GPT') {
+        Write-Host 'TELMI_ERROR:r36s-flash-gpt-failed'
+    }
     throw
 } finally {
     Stop-TelmiTranscript
