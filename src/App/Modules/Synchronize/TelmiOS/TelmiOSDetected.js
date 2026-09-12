@@ -6,8 +6,10 @@ import ButtonIconAnglesLeft from '../../../Components/Buttons/Icons/ButtonIconAn
 import ButtonIconGear from '../../../Components/Buttons/Icons/ButtonIconGear.js'
 import ButtonIconEject from '../../../Components/Buttons/Icons/ButtonIconEject.js'
 import ButtonIconMicrochip from '../../../Components/Buttons/Icons/ButtonIconMicrochip.js'
+import ButtonIconExpand from '../../../Components/Buttons/Icons/ButtonIconExpand.js'
 import ModalTelmiOSParamsForm from './ModalTelmiOSParamsForm.js'
 import ModalTelmiOSRevForm from './ModalTelmiOSRevForm.js'
+import ModalTelmiOSCardMakerConfirm from './TelmiOSCardMaker/ModalTelmiOSCardMakerConfirm.js'
 
 import styles from '../Synchronize.module.scss'
 import ModalTelmiOSEject from './ModalTelmiOSEject.js'
@@ -65,6 +67,25 @@ function TelmiOSDetected ({telmiOS, onTransfer, children}) {
         )
       },
       [telmiOS, addModal, rmModal]
+    ),
+    onExpandTelmi = useCallback(
+      () => {
+        addModal(
+          (key) => {
+            const modal = <ModalTelmiOSCardMakerConfirm key={key}
+                                                        drive={{
+                                                          drive: telmiOS.drive,
+                                                          name: telmiOS.telmiOS && telmiOS.telmiOS.label,
+                                                          size: telmiOS.diskusage ? telmiOS.diskusage.total : 0,
+                                                          sdLayout: 'expand',
+                                                          imageProfile: 'v20'
+                                                        }}
+                                                        onClose={() => rmModal(modal)}/>
+            return modal
+          }
+        )
+      },
+      [telmiOS, addModal, rmModal]
     )
 
   return <>
@@ -86,6 +107,12 @@ function TelmiOSDetected ({telmiOS, onTransfer, children}) {
           }
         </span>
         <span className={styles.telmiOSTitleIcons}>
+            {
+              isR36s &&
+              <ButtonIconExpand className={styles.telmiOSTitleIcon}
+                                title={getLocale('telmios-cardmaker-expand')}
+                                onClick={onExpandTelmi}/>
+            }
             {
               isR36s && telmiOS.dtbSelectable &&
               <ButtonIconMicrochip className={styles.telmiOSTitleIcon}

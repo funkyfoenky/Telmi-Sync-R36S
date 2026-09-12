@@ -68,6 +68,15 @@ const inferFlashErrorFromLog = (logFile) => {
     if (/WriteFile echoue/i.test(content)) {
       return 'r36s-flash-write-failed'
     }
+    if (/Format FAT32|FormatEx/i.test(content)) {
+      return 'r36s-flash-format-failed'
+    }
+    if (/BOOT|Layout Telmi incomplet|recouvre/i.test(content)) {
+      return 'r36s-expand-boot-unsafe'
+    }
+    if (/Partition root \(p2\)/i.test(content)) {
+      return 'r36s-expand-no-p2'
+    }
   } catch (e) {}
   return 'r36s-flash-failed'
 }
@@ -222,7 +231,7 @@ const resolveDiskNumberFromLetter = (letter) => new Promise((resolve) => {
  * Flash GPT R36S via flash-telmi-sd-win.ps1 (Windows natif, sans WSL).
  * Image = dernière release stable GitHub (pre-releases ignorées). Script = extraResources/r36s.
  * @param {string} drive ex. "E:\\" ou "E:" (optionnel si diskNumberParam)
- * @param {string} [sdLayout] 'mono' (from-image) | 'multi' (os-only)
+ * @param {string} [sdLayout] 'mono' (from-image) | 'multi' (os-only) | 'expand' (P3 only)
  * @param {string} [imageProfile] 'v20' | 'other'
  * @param {string|number} [diskNumberParam] numéro PhysicalDrive Windows (prioritaire)
  */
@@ -232,9 +241,10 @@ async function main(drive, sdLayout = 'mono', imageProfile = 'v20', diskNumberPa
     return
   }
 
-  const layout = sdLayout === 'multi' ? 'multi' : 'mono'
+  const isExpand = sdLayout === 'expand'
+  const layout = isExpand ? 'expand' : (sdLayout === 'multi' ? 'multi' : 'mono')
   const profile = normalizeImageProfile(imageProfile)
-  const flashMode = layout === 'multi' ? 'os-only' : 'from-image'
+  const flashMode = isExpand ? 'expand' : (layout === 'multi' ? 'os-only' : 'from-image')
 
   const letter = (drive || '').replace(/[^A-Za-z]/g, '').substring(0, 1).toUpperCase()
   let diskNumber = parseInt(String(diskNumberParam || '').trim(), 10)
@@ -252,12 +262,15 @@ async function main(drive, sdLayout = 'mono', imageProfile = 'v20', diskNumberPa
     return
   }
 
-  const imgPath = await ensureLatestImageFromGitHub(profile)
-  if (!imgPath) {
-    return
+  let imgPath = ''
+  if (!isExpand) {
+    imgPath = await ensureLatestImageFromGitHub(profile)
+    if (!imgPath) {
+      return
+    }
   }
 
-  emitProgress('r36s-step-prepare', 18)
+  emitProgress('r36s-step-prepare', isExpand ? 10 : 18)
 
   const stamp = Date.now()
   const exitFile = path.join(os.tmpdir(), 'telmi-r36-exit-' + stamp + '.txt')
@@ -271,8 +284,17 @@ async function main(drive, sdLayout = 'mono', imageProfile = 'v20', diskNumberPa
     }
   }
 
+  const EXPAND_STEP_BOUNDS = {
+    prepare: {key: 'r36s-step-prepare', lo: 8, hi: 18},
+    gpt: {key: 'r36s-step-gpt', lo: 18, hi: 35},
+    expand: {key: 'r36s-step-expand', lo: 35, hi: 82},
+    seed: {key: 'r36s-step-seed', lo: 82, hi: 94},
+    cleanup: {key: 'r36s-step-cleanup', lo: 94, hi: 99},
+    done: {key: 'r36s-step-done', lo: 100, hi: 100}
+  }
+
   const applyScriptProgress = (stepName, pct) => {
-    const bounds = SCRIPT_STEP_BOUNDS[stepName]
+    const bounds = isExpand ? EXPAND_STEP_BOUNDS[stepName] : SCRIPT_STEP_BOUNDS[stepName]
     if (!bounds) {
       return
     }
@@ -295,27 +317,32 @@ async function main(drive, sdLayout = 'mono', imageProfile = 'v20', diskNumberPa
   emitFlashLog('script=' + script)
   emitFlashLog('layout=' + layout + ' flashMode=' + flashMode + ' imageProfile=' + profile)
   emitFlashLog('letter=' + letter + ' diskNumber=' + diskNumber)
-  emitFlashLog('image=' + imgPath)
+  if (imgPath) {
+    emitFlashLog('image=' + imgPath)
+  }
   emitFlashLog('logFile=' + logFile)
   emitFlashLog('progressFile=' + progressFile)
+
+  const elevateArgs = [
+    '-NoProfile',
+    '-WindowStyle', 'Hidden',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', script,
+    '-DiskNumber', String(diskNumber),
+    '-Mode', flashMode,
+    '-Yes',
+    '-LogFile', logFile,
+    '-ProgressFile', progressFile
+  ]
+  if (!isExpand) {
+    elevateArgs.push('-ImagePath', imgPath, '-ImageProfile', profile)
+  }
 
   const elevateScript =
     '$ErrorActionPreference = "Stop"; ' +
     '$p = Start-Process -FilePath "powershell.exe" -Verb RunAs -Wait -PassThru ' +
     '-WindowStyle Hidden -ArgumentList @(' +
-    [
-      '-NoProfile',
-      '-WindowStyle', 'Hidden',
-      '-ExecutionPolicy', 'Bypass',
-      '-File', script,
-      '-DiskNumber', String(diskNumber),
-      '-Mode', flashMode,
-      '-ImagePath', imgPath,
-      '-ImageProfile', profile,
-      '-Yes',
-      '-LogFile', logFile,
-      '-ProgressFile', progressFile
-    ].map(psSingleQuote).join(',') +
+    elevateArgs.map(psSingleQuote).join(',') +
     '); ' +
     'if ($null -eq $p) { Set-Content -Path ' + psSingleQuote(exitFile) + ' -Value "1" -Encoding ASCII } ' +
     'else { Set-Content -Path ' + psSingleQuote(exitFile) + ' -Value ([string]$p.ExitCode) -Encoding ASCII }'

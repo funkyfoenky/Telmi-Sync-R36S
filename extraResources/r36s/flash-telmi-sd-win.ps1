@@ -343,17 +343,21 @@ function Repair-GptAlternate([int]$diskNum, [int64]$diskBytes) {
             throw "Pas de GPT primaire ($sig)"
         }
 
-        # Protective MBR : ajuster la taille de la partition unique pour couvrir le disque
+        # Protective MBR (type 0xEE) uniquement : ne jamais recrire un vrai MBR BOOT (0x0B/0x0C/0x07…)
         if ($mbr[510] -eq 0x55 -and $mbr[511] -eq 0xAA) {
-            # MBR : taille 32-bit. Eviter 0xFFFFFFFF (PS = Int32 -1 -> cast UInt64 impossible)
-            if ($lastLba -gt 4294967295L) { $partSize = [uint32]::MaxValue }
-            else { $partSize = [uint32]$lastLba }
-            [BitConverter]::GetBytes([uint32]1).CopyTo($mbr, 454)
-            [BitConverter]::GetBytes($partSize).CopyTo($mbr, 458)
-            [void][TelmiDiskIO]::SetFilePointerEx($h, 0L, [ref]$np, 0)
-            $bw = 0
-            if (-not [TelmiDiskIO]::WriteFile($h, $mbr, 512, [ref]$bw, [IntPtr]::Zero)) {
-                throw ("Ecriture MBR Win32=" + [Runtime.InteropServices.Marshal]::GetLastWin32Error())
+            $partType = [byte]$mbr[450]
+            if ($partType -eq 0xEE) {
+                if ($lastLba -gt 4294967295L) { $partSize = [uint32]::MaxValue }
+                else { $partSize = [uint32]$lastLba }
+                [BitConverter]::GetBytes([uint32]1).CopyTo($mbr, 454)
+                [BitConverter]::GetBytes($partSize).CopyTo($mbr, 458)
+                [void][TelmiDiskIO]::SetFilePointerEx($h, 0L, [ref]$np, 0)
+                $bw = 0
+                if (-not [TelmiDiskIO]::WriteFile($h, $mbr, 512, [ref]$bw, [IntPtr]::Zero)) {
+                    throw ("Ecriture MBR Win32=" + [Runtime.InteropServices.Marshal]::GetLastWin32Error())
+                }
+            } else {
+                Write-Host ("  MBR type 0x{0:X2} : pas de rewrite protective (BOOT preserve)" -f $partType) -ForegroundColor Yellow
             }
         }
 
@@ -536,19 +540,53 @@ delete partition override
     Write-Host '  SD OS = BOOT + root uniquement (contenu sur slot gauche)'
 }
 
+function Get-TelmiLayoutParts([int]$diskNum) {
+    Update-Disk -Number $diskNum -EA SilentlyContinue | Out-Null
+    $parts = @(Get-Partition -DiskNumber $diskNum -EA SilentlyContinue | Sort-Object Offset)
+    Write-Host '  Partitions actuelles :'
+    foreach ($p in $parts) {
+        $lt = if ($p.DriveLetter) { [string]$p.DriveLetter } else { '-' }
+        Write-Host ("    p{0} offset={1:N0} size={2} type={3} letter={4}" -f `
+            $p.PartitionNumber, [int64]$p.Offset, (Format-SizeGB $p.Size), $p.Type, $lt)
+    }
+    if ($parts.Count -lt 2) {
+        throw ("Layout Telmi incomplet ({0} partition(s) visible(s)). BOOT + root requis. Reflashez l image avec Rufus, puis reessayez." -f $parts.Count)
+    }
+    $pBoot = $parts[0]
+    $pRoot = $parts[1]
+    if ([int64]$pBoot.Offset -gt 128MB) {
+        throw ("Partition BOOT introuvable (1re partition offset {0:N0}). Abandon pour ne pas ecraser l OS." -f [int64]$pBoot.Offset)
+    }
+    if ([int64]$pRoot.Size -lt 80MB) {
+        throw 'Partition root (2e) trop petite - abandon'
+    }
+    if ([int64]$pRoot.Offset -le [int64]$pBoot.Offset) {
+        throw 'Ordre des partitions invalide (root avant BOOT) - abandon'
+    }
+    return [pscustomobject]@{ Boot = $pBoot; Root = $pRoot; All = $parts }
+}
+
 function Expand-TelmiPartition([int]$diskNum) {
     Write-TelmiProgress 'expand'
-    Write-Host '==> Expand partition TELMI (reste du disque)...'
+    Write-Host '==> Expand partition TELMI (reste du disque, BOOT/root intacts)...'
     Update-Disk -Number $diskNum -EA SilentlyContinue
     Start-Sleep -Seconds 1
 
-    # Supprime p3+ (garde p1 BOOT, p2 root)
-    Get-Partition -DiskNumber $diskNum -EA SilentlyContinue | Where-Object { $_.PartitionNumber -ge 3 } | ForEach-Object {
-        $pn = $_.PartitionNumber
-        $dl = $_.DriveLetter
-        Write-Host ("  supprime partition {0}" -f $pn)
+    $layout = Get-TelmiLayoutParts -diskNum $diskNum
+    $bootOff = [int64]$layout.Boot.Offset
+    $bootSize = [int64]$layout.Boot.Size
+    $rootOff = [int64]$layout.Root.Offset
+    $rootSize = [int64]$layout.Root.Size
+    $rootEnd = $rootOff + $rootSize
+    Write-Host ("  BOOT offset={0:N0} size={1}  root offset={2:N0} size={3}" -f $bootOff, (Format-SizeGB $bootSize), $rootOff, (Format-SizeGB $rootSize))
+
+    # Supprime uniquement les partitions APRES root (jamais par numero : Windows peut renumeroter)
+    foreach ($p in @($layout.All)) {
+        if ([int64]$p.Offset -lt $rootEnd) { continue }
+        $pn = $p.PartitionNumber
+        Write-Host ("  supprime partition {0} (apres root, offset {1:N0})" -f $pn, [int64]$p.Offset)
         try {
-            if ($dl) { mountvol ("{0}:" -f $dl) /D 2>$null }
+            if ($p.DriveLetter) { mountvol ("{0}:" -f $p.DriveLetter) /D 2>$null }
             Remove-Partition -DiskNumber $diskNum -PartitionNumber $pn -Confirm:$false
         } catch {
             Write-Host ("  WARN remove p{0}: {1}" -f $pn, $_.Exception.Message)
@@ -557,26 +595,37 @@ function Expand-TelmiPartition([int]$diskNum) {
     Start-Sleep -Seconds 1
     'rescan' | diskpart | Out-Null
     Start-Sleep -Seconds 1
+    Update-Disk -Number $diskNum -EA SilentlyContinue
 
-    $parts = @(Get-Partition -DiskNumber $diskNum | Sort-Object PartitionNumber)
-    $p2 = $parts | Where-Object { $_.PartitionNumber -eq 2 } | Select-Object -First 1
-    if (-not $p2) { throw 'Partition root (p2) introuvable - image incomplete ?' }
+    $layout2 = Get-TelmiLayoutParts -diskNum $diskNum
+    if ([int64]$layout2.Boot.Offset -ne $bootOff -or [int64]$layout2.Boot.Size -ne $bootSize) {
+        throw 'BOOT a change apres suppression TELMI - abandon (pas de formatage)'
+    }
+    if ([int64]$layout2.Root.Offset -ne $rootOff -or [int64]$layout2.Root.Size -ne $rootSize) {
+        throw 'root a change apres suppression TELMI - abandon'
+    }
+    $rootEnd = [int64]$layout2.Root.Offset + [int64]$layout2.Root.Size
 
-    Write-Host '  creation TELMI (espace libre max)...'
-    try {
-        $newPart = New-Partition -DiskNumber $diskNum -UseMaximumSize -AssignDriveLetter
-    } catch {
-        $disk = Get-Disk -Number $diskNum
-        $telmiOffset = [int64]$p2.Offset + [int64]$p2.Size
-        $align = 1MB
-        if (($telmiOffset % $align) -ne 0) {
-            $telmiOffset = [int64]([Math]::Ceiling($telmiOffset / $align) * $align)
-        }
-        $usable = [int64]$disk.Size - 34L * 512L
-        $telmiSize = $usable - $telmiOffset
-        if ($telmiSize -lt 50MB) { throw ("Espace TELMI insuffisant ({0} octets)" -f $telmiSize) }
-        Write-Host ("  fallback offset={0:N0} taille={1}" -f $telmiOffset, (Format-SizeGB $telmiSize))
-        $newPart = New-Partition -DiskNumber $diskNum -Offset $telmiOffset -Size $telmiSize -AssignDriveLetter
+    $disk = Get-Disk -Number $diskNum
+    $align = 1MB
+    $telmiOffset = $rootEnd
+    if (($telmiOffset % $align) -ne 0) {
+        $telmiOffset = [int64]([Math]::Ceiling($telmiOffset / $align) * $align)
+    }
+    $usable = [int64]$disk.Size - 1MB
+    $telmiSize = $usable - $telmiOffset
+    if ($telmiSize -lt 50MB) { throw ("Espace TELMI insuffisant ({0} octets)" -f $telmiSize) }
+    if ($telmiOffset -le $bootOff) { throw 'Offset TELMI recouvre BOOT - abandon' }
+    if ($telmiOffset -lt $rootEnd) { throw 'Offset TELMI recouvre root - abandon' }
+
+    Write-Host ("  creation TELMI offset={0:N0} taille={1} (pas UseMaximumSize)" -f $telmiOffset, (Format-SizeGB $telmiSize))
+    $newPart = New-Partition -DiskNumber $diskNum -Offset $telmiOffset -Size $telmiSize -AssignDriveLetter
+    if ([int64]$newPart.Offset -lt $rootEnd) {
+        throw 'Nouvelle partition recouvre root/BOOT - abandon formatage'
+    }
+    $layout3 = Get-TelmiLayoutParts -diskNum $diskNum
+    if ([int64]$layout3.Boot.Offset -ne $bootOff -or [int64]$layout3.Boot.Size -ne $bootSize) {
+        throw 'BOOT perdu apres New-Partition - abandon formatage'
     }
     $letter = $newPart.DriveLetter
     if (-not $letter) {
@@ -588,6 +637,10 @@ function Expand-TelmiPartition([int]$diskNum) {
         $letter = (Get-Partition -DiskNumber $diskNum -PartitionNumber $newPart.PartitionNumber).DriveLetter
     }
     if (-not $letter) { throw 'Impossible d assigner une lettre a TELMI' }
+    $bootLetter = $layout3.Boot.DriveLetter
+    if ($bootLetter -and ([char]$letter -eq [char]$bootLetter)) {
+        throw 'Lettre TELMI identique a BOOT - abandon formatage'
+    }
 
     $drive = '{0}:' -f $letter
     $volSize = [int64](Get-Partition -DiskNumber $diskNum -PartitionNumber $newPart.PartitionNumber).Size
@@ -690,16 +743,15 @@ if ($Mode -in @('from-image', 'os-only')) {
     Write-Host (" Image : {0}" -f $img)
 }
 
-$disks = @(Get-RemovableDisks)
-if ($disks.Count -eq 0) {
-    Write-Host 'Aucun disque USB/SD amovible (>= 3 Go).' -ForegroundColor Red
-    Get-Disk | Format-Table Number, FriendlyName, BusType, @{N='Size';E={Format-SizeGB $_.Size}} -AutoSize
-    exit 1
-}
-
 if ($DiskNumber -ge 0) {
     $disk = Get-Disk -Number $DiskNumber -EA Stop
 } else {
+    $disks = @(Get-RemovableDisks)
+    if ($disks.Count -eq 0) {
+        Write-Host 'Aucun disque USB/SD amovible (>= 3 Go).' -ForegroundColor Red
+        Get-Disk | Format-Table Number, FriendlyName, BusType, @{N='Size';E={Format-SizeGB $_.Size}} -AutoSize
+        exit 1
+    }
     Write-Host ''
     Write-Host ' Disques amovibles :'
     $map = @{}
@@ -722,7 +774,11 @@ $phys = "\\.\PhysicalDrive$diskNum"
 Write-Host ''
 Write-Host (" Cible : PhysicalDrive{0} ({1}) - {2}" -f $diskNum, (Format-SizeGB $disk.Size), $disk.FriendlyName) -ForegroundColor Yellow
 Write-Host (" Mode  : {0}" -f $Mode)
-Write-Host ' ATTENTION : le contenu du disque sera modifie.' -ForegroundColor Red
+if ($Mode -eq 'expand') {
+    Write-Host ' ATTENTION : p1 BOOT et p2 root restent intacts. p3 TELMI sera recree sur tout l espace libre.' -ForegroundColor Yellow
+} else {
+    Write-Host ' ATTENTION : le contenu du disque sera modifie.' -ForegroundColor Red
+}
 
 if (-not $Yes) {
     $c = Read-Host 'Tapez FLASH pour confirmer'
@@ -759,11 +815,15 @@ try {
         }
         Set-TelmiDiskOffline -num $diskNum -offline $false
     } else {
-        # expand seul : ne pas clean  -  juste GPT + recreate TELMI
+        # expand seul : ne jamais clean. Verifier BOOT+root, GPT repair OFFLINE, puis recreer TELMI apres root.
+        Write-Host '==> Mode expand : verification BOOT+root (aucune donnee OS ne sera ecrasee)...'
+        $null = Get-TelmiLayoutParts -diskNum $diskNum
         Dismount-DiskVolumes -num $diskNum
         Write-TelmiProgress 'gpt'
-        Write-Host '==> Correction GPT (sgdisk -e equivalent)...'
+        Write-Host '==> Correction GPT (disque offline)...'
+        Set-TelmiDiskOffline -num $diskNum -offline $true
         Repair-GptAlternate -diskNum $diskNum -diskBytes ([int64]$disk.Size)
+        Set-TelmiDiskOffline -num $diskNum -offline $false
     }
     $script:FlashOk = $true
 } finally {
@@ -803,6 +863,8 @@ if ($Mode -eq 'os-only') {
     if ($ImageProfile -eq 'other') {
         Write-Host ' Puis selectionnez le DTB depuis Telmi Sync (icon puce)' -ForegroundColor Green
     }
+} elseif ($Mode -eq 'expand') {
+    Write-Host ' Expand TELMI (P3) OK — BOOT/root intacts' -ForegroundColor Green
 } else {
     Write-Host ' Flash/expand OK (sans WSL)' -ForegroundColor Green
     if ($ImageProfile -eq 'other') {
@@ -821,6 +883,12 @@ Write-Host '============================================================' -Foreg
         Write-Host 'TELMI_ERROR:r36s-flash-access-denied'
     } elseif ($errMsg -match 'WriteFile echoue') {
         Write-Host 'TELMI_ERROR:r36s-flash-write-failed'
+    } elseif ($errMsg -match 'Format FAT32|FormatEx') {
+        Write-Host 'TELMI_ERROR:r36s-flash-format-failed'
+    } elseif ($errMsg -match 'BOOT|Layout Telmi incomplet|recouvre root|recouvre BOOT') {
+        Write-Host 'TELMI_ERROR:r36s-expand-boot-unsafe'
+    } elseif ($errMsg -match 'Partition root \(p2\)') {
+        Write-Host 'TELMI_ERROR:r36s-expand-no-p2'
     } elseif ($errMsg -match 'GPT|Pas de GPT') {
         Write-Host 'TELMI_ERROR:r36s-flash-gpt-failed'
     }

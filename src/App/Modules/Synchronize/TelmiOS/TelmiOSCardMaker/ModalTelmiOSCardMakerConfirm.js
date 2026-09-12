@@ -12,6 +12,7 @@ function ModalTelmiOSCardMakerConfirm({drive, onClose}) {
     {addModal, rmModal} = useModal(),
     isR36s = params && params.deviceMode === 'r36s',
     isMulti = isR36s && drive.sdLayout === 'multi',
+    isExpand = isR36s && drive.sdLayout === 'expand',
     isOther = isR36s && drive.imageProfile === 'other',
     driveDisplay = (() => {
       const letter = (drive.drive || '').replace(/\\$/, '').replace(/:$/, '')
@@ -23,23 +24,27 @@ function ModalTelmiOSCardMakerConfirm({drive, onClose}) {
       }
       return drive.drive || '?'
     })(),
-    driveLabel = '<strong>' + driveDisplay + ' (' + drive.name + ')</strong>',
+    driveLabel = '<strong>' + driveDisplay + (drive.name ? ' (' + drive.name + ')' : '') + '</strong>',
     title = !isR36s
       ? getLocale('telmios-cardmaker-alert', driveDisplay)
-      : (isMulti
-        ? getLocale('telmios-cardmaker-alert-r36s-multi', driveDisplay)
-        : getLocale('telmios-cardmaker-alert-r36s', driveDisplay)),
+      : (isExpand
+        ? getLocale('telmios-cardmaker-alert-r36s-expand', driveDisplay)
+        : (isMulti
+          ? getLocale('telmios-cardmaker-alert-r36s-multi', driveDisplay)
+          : getLocale('telmios-cardmaker-alert-r36s', driveDisplay))),
     message = !isR36s
       ? getLocale('telmios-cardmaker-alert-message', driveLabel)
-      : (isMulti
-        ? getLocale(
-          isOther ? 'telmios-cardmaker-alert-message-r36s-multi-other' : 'telmios-cardmaker-alert-message-r36s-multi',
-          driveLabel
-        )
-        : getLocale(
-          isOther ? 'telmios-cardmaker-alert-message-r36s-other' : 'telmios-cardmaker-alert-message-r36s',
-          driveLabel
-        ))
+      : (isExpand
+        ? getLocale('telmios-cardmaker-alert-message-r36s-expand', driveLabel)
+        : (isMulti
+          ? getLocale(
+            isOther ? 'telmios-cardmaker-alert-message-r36s-multi-other' : 'telmios-cardmaker-alert-message-r36s-multi',
+            driveLabel
+          )
+          : getLocale(
+            isOther ? 'telmios-cardmaker-alert-message-r36s-other' : 'telmios-cardmaker-alert-message-r36s',
+            driveLabel
+          )))
 
   return <ModalDialogConfirm title={title}
                              message={message}

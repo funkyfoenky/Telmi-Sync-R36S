@@ -226,7 +226,8 @@ function mainEventTelmiOS(mainWindow) {
         return
       }
       const drivePath = typeof drive === 'string' ? drive : (drive.drive || '')
-      const sdLayout = (typeof drive === 'object' && drive.sdLayout === 'multi') ? 'multi' : 'mono'
+      const rawLayout = (typeof drive === 'object' && drive.sdLayout) ? String(drive.sdLayout) : 'mono'
+      const sdLayout = (rawLayout === 'multi' || rawLayout === 'expand') ? rawLayout : 'mono'
       const imageProfile = (typeof drive === 'object' && drive.imageProfile === 'other') ? 'other' : 'v20'
       const diskNumber = (typeof drive === 'object' && Number.isFinite(drive.diskNumber)) ? String(drive.diskNumber) : ''
       if (!drivePath && !diskNumber) {

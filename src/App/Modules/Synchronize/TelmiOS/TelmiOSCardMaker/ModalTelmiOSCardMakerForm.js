@@ -23,7 +23,17 @@ const formatDriveOption = (drive, getLocale) => {
   return label + ' — ' + drive.name + ' (' + toGigabytes(drive.size) + getLocale('gb') + ')'
 }
 
-function ModalTelmiOSCardMakerForm({onClose}) {
+const layoutHintKey = (sdLayout) => {
+  if (sdLayout === 'multi') {
+    return 'telmios-cardmaker-sd-multi-hint'
+  }
+  if (sdLayout === 'expand') {
+    return 'telmios-cardmaker-sd-expand-hint'
+  }
+  return 'telmios-cardmaker-sd-mono-hint'
+}
+
+function ModalTelmiOSCardMakerForm({onClose, initialLayout}) {
   const
     {getLocale} = useLocale(),
     {addModal, rmModal} = useModal(),
@@ -31,7 +41,8 @@ function ModalTelmiOSCardMakerForm({onClose}) {
     isR36s = params && params.deviceMode === 'r36s',
     [drives, setDrives] = useState([]),
     [imageProfile, setImageProfile] = useState('v20'),
-    [sdLayout, setSdLayout] = useState('mono'),
+    [sdLayout, setSdLayout] = useState(initialLayout === 'expand' ? 'expand' : 'mono'),
+    isExpand = isR36s && sdLayout === 'expand',
     inputRefProfile = useRef(),
     inputRefDrive = useRef(),
     inputRefLayout = useRef()
@@ -47,13 +58,13 @@ function ModalTelmiOSCardMakerForm({onClose}) {
 
   return <ModalLayoutPadded isClosable={true}
                             onClose={onClose}>
-    <ModalTitle>{getLocale('telmios-cardmaker-create')} :</ModalTitle>
+    <ModalTitle>{getLocale(isExpand ? 'telmios-cardmaker-expand-title' : 'telmios-cardmaker-create')} :</ModalTitle>
     <Form>{
       (validation) => {
         return <>
           <ModalContent>
             {
-              isR36s &&
+              isR36s && !isExpand &&
               <InputSelect label={getLocale('telmios-cardmaker-image-profile')}
                            key="telmios-cardmaker-image-profile"
                            id="telmios-cardmaker-image-profile"
@@ -67,7 +78,7 @@ function ModalTelmiOSCardMakerForm({onClose}) {
                            ref={inputRefProfile}/>
             }
             {
-              isR36s &&
+              isR36s && !isExpand &&
               <p>{getLocale(imageProfile === 'other' ? 'telmios-cardmaker-image-other-hint' : 'telmios-cardmaker-image-v20-hint')}</p>
             }
             {
@@ -79,14 +90,15 @@ function ModalTelmiOSCardMakerForm({onClose}) {
                            defaultValue={sdLayout}
                            options={[
                              {value: 'mono', text: getLocale('telmios-cardmaker-sd-mono')},
-                             {value: 'multi', text: getLocale('telmios-cardmaker-sd-multi')}
+                             {value: 'multi', text: getLocale('telmios-cardmaker-sd-multi')},
+                             {value: 'expand', text: getLocale('telmios-cardmaker-sd-expand')}
                            ]}
                            onChange={(v) => setSdLayout(v)}
                            ref={inputRefLayout}/>
             }
             {
               isR36s &&
-              <p>{getLocale(sdLayout === 'multi' ? 'telmios-cardmaker-sd-multi-hint' : 'telmios-cardmaker-sd-mono-hint')}</p>
+              <p>{getLocale(layoutHintKey(sdLayout))}</p>
             }
             <InputSelect label={getLocale(isR36s && sdLayout === 'multi' ? 'telmios-cardmaker-select-os' : 'telmios-cardmaker-select')}
                          key="telmios-cardmaker-drive"
@@ -102,19 +114,21 @@ function ModalTelmiOSCardMakerForm({onClose}) {
                          ref={inputRefDrive}/>
           </ModalContent>
           <ButtonsContainer>
-            <ButtonIconTextSDCard text={getLocale('make')}
+            <ButtonIconTextSDCard text={getLocale(isExpand ? 'telmios-cardmaker-expand-action' : 'make')}
                                   rounded={true}
                                   onClick={() => {
-                                    const refs = isR36s ? [inputRefProfile, inputRefLayout, inputRefDrive] : [inputRefDrive]
+                                    const refs = isR36s
+                                      ? (isExpand ? [inputRefLayout, inputRefDrive] : [inputRefProfile, inputRefLayout, inputRefDrive])
+                                      : [inputRefDrive]
                                     validation(
                                       refs,
                                       (values) => {
-                                        const profile = isR36s ? values[0] : 'v20'
-                                        const layout = isR36s ? values[1] : 'mono'
-                                        const driveIndex = isR36s ? values[2] : values[0]
+                                        const layout = isR36s ? (isExpand ? values[0] : values[1]) : 'mono'
+                                        const profile = isR36s && !isExpand ? values[0] : 'v20'
+                                        const driveIndex = isR36s ? (isExpand ? values[1] : values[2]) : values[0]
                                         const selectedDrive = {
                                           ...drives[driveIndex],
-                                          sdLayout: layout === 'multi' ? 'multi' : 'mono',
+                                          sdLayout: (layout === 'multi' || layout === 'expand') ? layout : 'mono',
                                           imageProfile: profile === 'other' ? 'other' : 'v20'
                                         }
                                         addModal((key) => {
