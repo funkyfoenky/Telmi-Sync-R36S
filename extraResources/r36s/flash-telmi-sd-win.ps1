@@ -132,32 +132,45 @@ function Get-RemovableDisks {
 
 # TelmiDiskIO + TelmiFmifs : definis dans telmi-sd-common.ps1 (dot-source plus haut)
 
-function Dismount-DiskVolumes([int]$num) {
+function Get-TelmiVolumeDevicePaths([int]$num) {
+    $map = @{}
     Get-Partition -DiskNumber $num -EA SilentlyContinue | ForEach-Object {
+        foreach ($ap in @($_.AccessPaths)) {
+            if (-not $ap) { continue }
+            $p = [string]$ap
+            if ($p -notmatch 'Volume\{') { continue }
+            $p = $p.TrimEnd('\')
+            if ($p.StartsWith('\\?\')) { $p = '\\.\' + $p.Substring(4) }
+            $map[$p] = $true
+        }
         if ($_.DriveLetter) {
-            $ch = [char]$_.DriveLetter
-            Write-Host ("  lock/dismount {0}:" -f $ch)
-            try { [TelmiDiskIO]::LockAndDismountLetter($ch) } catch {}
-            try { mountvol ("{0}:" -f $ch) /D 2>$null } catch {}
+            $map[('\\.\' + $_.DriveLetter + ':')] = $true
+        }
+    }
+    return @($map.Keys)
+}
+
+function Dismount-DiskVolumes([int]$num) {
+    foreach ($p in (Get-TelmiVolumeDevicePaths -num $num)) {
+        Write-Host ("  lock/dismount {0}" -f $p)
+        try { [TelmiDiskIO]::LockAndDismountPath($p) } catch {}
+        if ($p -match '\\\\\.\\([A-Za-z]):$') {
+            try { mountvol ('{0}:' -f $Matches[1]) /D 2>$null } catch {}
         }
     }
     Start-Sleep -Milliseconds 300
 }
 
-# Verrouille tous les volumes et GARDE les handles ouverts (empeche Windows de remonter mid-write)
+# Verrouille tous les volumes (lettre OU GUID) et GARDE les handles ouverts
 function Lock-DiskVolumesPersistent([int]$num) {
     $handles = New-Object System.Collections.Generic.List[IntPtr]
-    Get-Partition -DiskNumber $num -EA SilentlyContinue | ForEach-Object {
-        if ($_.DriveLetter) {
-            $ch = [char]$_.DriveLetter
-            Write-Host ("  verrou persistant {0}: (garde ouvert)" -f $ch)
-            $h = [TelmiDiskIO]::LockVolumeLetter($ch)
-            if ($h -ne [TelmiDiskIO]::INVALID) {
-                $handles.Add($h)
-            } else {
-                Write-Host ("  WARN: impossible de verrouiller {0}:" -f $ch) -ForegroundColor Yellow
-            }
-            try { mountvol ("{0}:" -f $ch) /D 2>$null } catch {}
+    foreach ($p in (Get-TelmiVolumeDevicePaths -num $num)) {
+        Write-Host ("  verrou persistant {0}" -f $p)
+        $h = [TelmiDiskIO]::LockVolumePath($p)
+        if ($h -ne [TelmiDiskIO]::INVALID) {
+            $handles.Add($h)
+        } else {
+            Write-Host ("  WARN: impossible de verrouiller {0}" -f $p) -ForegroundColor Yellow
         }
     }
     return $handles
@@ -216,24 +229,23 @@ clean
 }
 
 function Set-TelmiDiskOffline([int]$num, [bool]$offline) {
-    if ($offline) {
-        Write-Host ("  offline disk {0}" -f $num)
-        @"
-select disk $num
-offline disk
-"@ | diskpart | Out-Null
-        try { Set-Disk -Number $num -IsOffline $true -EA SilentlyContinue } catch {}
-    } else {
-        Write-Host ("  online disk {0}" -f $num)
-        @"
-select disk $num
-online disk
-attributes disk clear readonly
-"@ | diskpart | Out-Null
-        try { Set-Disk -Number $num -IsOffline $false -EA SilentlyContinue } catch {}
-        try { Set-Disk -Number $num -IsReadOnly $false -EA SilentlyContinue } catch {}
+    # Pas de diskpart : sur USB Generic il bloque a l'infini si le lecteur est NOT_READY.
+    $label = if ($offline) { 'offline' } else { 'online' }
+    Write-Host ("  {0} disk {1}" -f $label, $num)
+    $job = Start-Job -ScriptBlock {
+        param($n, $off)
+        if ($off) {
+            Set-Disk -Number $n -IsOffline $true -EA SilentlyContinue
+        } else {
+            Set-Disk -Number $n -IsOffline $false -EA SilentlyContinue
+            Set-Disk -Number $n -IsReadOnly $false -EA SilentlyContinue
+        }
+    } -ArgumentList $num, $offline
+    if (-not (Wait-Job $job -Timeout 8)) {
+        Write-Host ("  Set-Disk {0} timeout (lecteur USB)" -f $label) -ForegroundColor Yellow
+        Stop-Job $job -Force
     }
-    Start-Sleep -Milliseconds 800
+    Remove-Job $job -Force -EA SilentlyContinue
 }
 
 function Test-DiskIsOffline([int]$num) {
@@ -245,18 +257,68 @@ function Test-DiskIsOffline([int]$num) {
 
 function Open-PhysicalDriveHandle([int]$num) {
     $path = "\\.\PhysicalDrive$num"
-    # Pas de WRITE_THROUGH : certains lecteurs USB renvoient ACCESS_DENIED (5) apres quelques Mo
-    $h = [TelmiDiskIO]::CreateFile(
-        $path,
-        [TelmiDiskIO]::GENERIC_READ -bor [TelmiDiskIO]::GENERIC_WRITE,
-        [TelmiDiskIO]::FILE_SHARE_READ -bor [TelmiDiskIO]::FILE_SHARE_WRITE,
-        [IntPtr]::Zero,
-        [TelmiDiskIO]::OPEN_EXISTING,
-        0,
-        [IntPtr]::Zero)
+    # Exclusif d'abord (share=0), fallback share — pas de WRITE_THROUGH (Win32=5 sur USB)
+    $h = [TelmiDiskIO]::OpenPhysicalDrive($num)
     if ($h -eq [TelmiDiskIO]::INVALID) {
         $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
         throw ("CreateFile $path echoue (Win32=$err). Volume encore monte / Explorateur ouvert ?")
+    }
+    return $h
+}
+
+function Invoke-TelmiDiskWrite {
+    param(
+        [IntPtr]$Handle,
+        [byte[]]$Buffer,
+        [int]$Count,
+        [int64]$Offset,
+        [int]$DiskNum
+    )
+    $h = $Handle
+    $attempt = 0
+    $sent = 0
+    while ($sent -lt $Count) {
+        $left = $Count - $sent
+        $chunk = $Buffer
+        if ($sent -ne 0) {
+            $chunk = New-Object byte[] $left
+            [Array]::Copy($Buffer, $sent, $chunk, 0, $left)
+        }
+        $bw = 0
+        $np = 0L
+        [void][TelmiDiskIO]::SetFilePointerEx($h, ($Offset + $sent), [ref]$np, 0)
+        $ok = [TelmiDiskIO]::WriteFile($h, $chunk, [uint32]$left, [ref]$bw, [IntPtr]::Zero)
+        if ($ok -and $bw -gt 0) {
+            $sent += [int]$bw
+            $attempt = 0
+            continue
+        }
+        $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        $attempt++
+        if ($attempt -gt 8 -or ($err -ne 5 -and $err -ne 21 -and $err -ne 15)) {
+            $hint = switch ($err) {
+                5 { 'ACCESS_DENIED (volume remonte)' }
+                21 { 'NOT_READY (lecteur SD)' }
+                15 { 'NO_MEDIA' }
+                default { "Win32=$err" }
+            }
+            throw ("WriteFile echoue a offset {0} ({1})" -f ($Offset + $sent), $hint)
+        }
+        Write-Host ("  retry WriteFile offset={0} err={1} (tentative {2})..." -f ($Offset + $sent), $err, $attempt) -ForegroundColor Yellow
+        try { [void][TelmiDiskIO]::CloseHandle($h) } catch {}
+        if ($err -eq 21 -or $err -eq 15) {
+            Start-Sleep -Milliseconds 1000
+            # Cycle doux : online d'abord (lecteur souvent bloque par un verrou volume), offline une fois si ca continue
+            if ($attempt -eq 4) {
+                try { Set-Disk -Number $DiskNum -IsOffline $true -EA SilentlyContinue } catch {}
+            } else {
+                try { Set-Disk -Number $DiskNum -IsOffline $false -EA SilentlyContinue } catch {}
+            }
+        } else {
+            Start-Sleep -Milliseconds 600
+            Dismount-DiskVolumes -num $DiskNum
+        }
+        $h = Open-PhysicalDriveHandle -num $DiskNum
     }
     return $h
 }
@@ -424,63 +486,51 @@ function Write-ImageToPhysicalDrive([string]$imgPath, [int]$diskNum, [int64]$dis
     }
     Write-TelmiProgress 'write' 0
     Write-Host ("==> Ecriture {0} -> PhysicalDrive{1} ..." -f $imgInfo.Name, $diskNum)
+    Write-Host '  MBR/GPT ecrits en dernier (evite remount FAT32 Windows a ~16 Mo)'
 
     [int]$bufSize = 1MB
+    [int64]$headerSize = 1MB
+    [int64]$total = $imgInfo.Length
+    if ($total -le $headerSize) { $headerSize = 512L }
     $buf = New-Object byte[] $bufSize
     $src = [System.IO.File]::OpenRead($imgPath)
     $h = Open-PhysicalDriveHandle -num $diskNum
     try {
-        [int64]$written = 0L
-        [int64]$total = $imgInfo.Length
         $lastPct = -1
-        $np = 0L
-        [void][TelmiDiskIO]::SetFilePointerEx($h, 0L, [ref]$np, 0)
 
+        # 1) Effacer la table de partitions existante pour demonter BOOT/TELMI
+        Write-Host '  wipe MBR (1 Mo de zeros)...'
+        $zeros = New-Object byte[] $headerSize
+        $h = Invoke-TelmiDiskWrite -Handle $h -Buffer $zeros -Count ([int]$headerSize) -Offset 0L -DiskNum $diskNum
+        Write-TelmiProgress 'write' 1
+
+        # 2) Corps de l'image SANS MBR : Windows ne peut pas monter la FAT32 BOOT
+        $src.Position = $headerSize
+        [int64]$written = $headerSize
         while ($written -lt $total) {
             $remaining = $total - $written
             [int]$toRead = if ($remaining -lt $bufSize) { [int]$remaining } else { $bufSize }
             $n = $src.Read($buf, 0, $toRead)
             if ($n -le 0) { break }
-
-            $attempt = 0
-            while ($true) {
-                $bw = 0
-                $ok = [TelmiDiskIO]::WriteFile($h, $buf, [uint32]$n, [ref]$bw, [IntPtr]::Zero)
-                if ($ok) { break }
-
-                $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-                $attempt++
-                # 5=ACCESS_DENIED, 21=NOT_READY, 15=NO_MEDIA
-                if ($attempt -gt 5 -or ($err -ne 5 -and $err -ne 21 -and $err -ne 15)) {
-                    $hint = switch ($err) {
-                        5 { 'ACCESS_DENIED (volume remonte / antivirus / Explorateur)' }
-                        21 { 'NOT_READY (lecteur SD)' }
-                        15 { 'NO_MEDIA' }
-                        default { "Win32=$err" }
-                    }
-                    throw ("WriteFile echoue a offset {0} ({1}). Fermez Explorateur sur la SD et reessayez." -f $written, $hint)
-                }
-                Write-Host ("  retry WriteFile offset={0} err={1} (tentative {2})..." -f $written, $err, $attempt) -ForegroundColor Yellow
-                try { [void][TelmiDiskIO]::CloseHandle($h) } catch {}
-                Start-Sleep -Milliseconds 700
-                # Si Windows a remonte : re-verrouiller lettres encore presentes
-                Get-Partition -DiskNumber $diskNum -EA SilentlyContinue | ForEach-Object {
-                    if ($_.DriveLetter) {
-                        try { [void][TelmiDiskIO]::LockAndDismountLetter([char]$_.DriveLetter) } catch {}
-                        try { mountvol ("{0}:" -f $_.DriveLetter) /D 2>$null } catch {}
-                    }
-                }
-                $h = Open-PhysicalDriveHandle -num $diskNum
-                [void][TelmiDiskIO]::SetFilePointerEx($h, $written, [ref]$np, 0)
-            }
+            $h = Invoke-TelmiDiskWrite -Handle $h -Buffer $buf -Count $n -Offset $written -DiskNum $diskNum
             $written += $n
             $pct = [int](($written * 100L) / $total)
-            if ($pct -ne $lastPct -and ($pct % 5 -eq 0)) {
-                Write-Host ("  {0}% ({1:N1} / {2:N1} Mo)" -f $pct, ($written / 1MB), ($total / 1MB))
+            if ($pct -ne $lastPct) {
                 Write-TelmiProgress 'write' $pct
+                if ($pct % 5 -eq 0) {
+                    Write-Host ("  {0}% ({1:N1} / {2:N1} Mo)" -f $pct, ($written / 1MB), ($total / 1MB))
+                }
                 $lastPct = $pct
             }
         }
+
+        # 3) MBR/GPT en tout dernier : le reste est deja sur la carte
+        Write-Host '  ecriture MBR/GPT (fin)...'
+        $src.Position = 0L
+        $headerBuf = New-Object byte[] $headerSize
+        $got = $src.Read($headerBuf, 0, [int]$headerSize)
+        if ($got -ne $headerSize) { throw 'Lecture header image incomplete' }
+        $h = Invoke-TelmiDiskWrite -Handle $h -Buffer $headerBuf -Count ([int]$headerSize) -Offset 0L -DiskNum $diskNum
         [void][TelmiDiskIO]::FlushFileBuffers($h)
         Write-TelmiProgress 'write' 100
         Write-Host '  Ecriture image OK'
@@ -800,8 +850,10 @@ try {
 
     if ($Mode -in @('from-image', 'os-only')) {
         Clear-TelmiDisk -num $diskNum
-        # Verrou persistant + disque offline : empeche Windows/Explorateur de remonter la SD pendant l'ecriture
-        $volLocks = Lock-DiskVolumesPersistent -num $diskNum
+        Start-Sleep -Seconds 1
+        # Pas de verrou volume pendant le dd : IOCTL_VOLUME_OFFLINE rend ce lecteur Generic NOT_READY.
+        # Un seul offline (comme le flash OK 21:32) ; jamais de re-offline en retry.
+        Write-Host '  offline unique avant ecriture (sans verrou volume)'
         Set-TelmiDiskOffline -num $diskNum -offline $true
         Write-ImageToPhysicalDrive -imgPath $img -diskNum $diskNum -diskBytes ([int64]$disk.Size)
         Write-TelmiProgress 'gpt'
@@ -879,7 +931,9 @@ Write-Host '============================================================' -Foreg
 } catch {
     $errMsg = $_.Exception.Message
     Write-Host ("ERREUR: {0}" -f $errMsg) -ForegroundColor Red
-    if ($errMsg -match 'ACCESS_DENIED|Explorateur|volume remonte') {
+    if ($errMsg -match 'NOT_READY|NO_MEDIA') {
+        Write-Host 'TELMI_ERROR:r36s-flash-not-ready'
+    } elseif ($errMsg -match 'ACCESS_DENIED \(volume remonte') {
         Write-Host 'TELMI_ERROR:r36s-flash-access-denied'
     } elseif ($errMsg -match 'WriteFile echoue') {
         Write-Host 'TELMI_ERROR:r36s-flash-write-failed'

@@ -289,6 +289,7 @@ const en = {
   'r36s-flashing': 'R36S flash (BOOT + root + TELMI)',
   'r36s-flash-failed': 'R36S flash failed. Check admin rights and that the SD is not locked.',
   'r36s-flash-access-denied': 'Write interrupted: Windows remounted the SD card. Close File Explorer on that drive, quit any other app using it, then retry (Telmi Sync pauses USB scanning during the write).',
+  'r36s-flash-not-ready': 'The SD reader is not ready (Generic USB). Unplug the card, plug it back in, then retry the flash.',
   'r36s-flash-write-failed': 'Failed to write the image to the SD card. Check the reader, USB cable, and try again.',
   'r36s-flash-gpt-failed': 'Image written but GPT repair failed. Retry the flash; if it persists, try another SD card or reader.',
   'r36s-flash-format-failed': 'FAT32 formatting of TELMI failed. Close File Explorer on that drive, quit antivirus/apps using it, then retry P3 expand.',

@@ -59,7 +59,10 @@ const inferFlashErrorFromLog = (logFile) => {
     if (telmiErr) {
       return telmiErr[1]
     }
-    if (/ACCESS_DENIED|Explorateur|volume remonte/i.test(content)) {
+    if (/NOT_READY|n.est pas pret/i.test(content)) {
+      return 'r36s-flash-not-ready'
+    }
+    if (/ACCESS_DENIED \(volume remonte\)/i.test(content)) {
       return 'r36s-flash-access-denied'
     }
     if (/Pas de GPT|GPT primaire|GPT secondaire/i.test(content)) {
@@ -350,6 +353,8 @@ async function main(drive, sdLayout = 'mono', imageProfile = 'v20', diskNumberPa
   let logOffset = 0
   let logCarry = ''
   let lastProgressRaw = ''
+  let finished = false
+  let fatalLogAt = 0
   const relayLogFile = () => {
     try {
       if (!fs.existsSync(logFile)) {
@@ -404,6 +409,18 @@ async function main(drive, sdLayout = 'mono', imageProfile = 'v20', diskNumberPa
   const poll = setInterval(() => {
     relayLogFile()
     relayProgressFile()
+    try {
+      if (!fatalLogAt && fs.existsSync(logFile)) {
+        const c = fs.readFileSync(logFile, 'utf8')
+        if (/TELMI_ERROR:|WriteFile echoue/i.test(c)) {
+          fatalLogAt = Date.now()
+        }
+      }
+      if (fatalLogAt && (Date.now() - fatalLogAt) > 12000) {
+        try { child.kill() } catch (e) {}
+        finish(false)
+      }
+    } catch (e) {}
   }, 500)
 
   const child = spawn(
@@ -433,6 +450,10 @@ async function main(drive, sdLayout = 'mono', imageProfile = 'v20', diskNumberPa
   })
 
   const finish = (ok) => {
+    if (finished) {
+      return
+    }
+    finished = true
     clearInterval(poll)
     relayLogFile()
     relayProgressFile()

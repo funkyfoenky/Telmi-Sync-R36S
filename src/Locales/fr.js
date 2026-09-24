@@ -289,6 +289,7 @@ const fr = {
   'r36s-flashing': 'Flash R36S (BOOT + root + TELMI)',
   'r36s-flash-failed': 'Le flash R36S a échoué. Vérifiez les droits admin et que la SD n\'est pas verrouillée.',
   'r36s-flash-access-denied': 'Écriture interrompue : Windows a remonté la carte SD. Fermez l’Explorateur sur cette carte, quittez toute autre app qui y accède, puis relancez le flash (Telmi Sync se met en pause pendant l’écriture).',
+  'r36s-flash-not-ready': 'Le lecteur SD n’est plus prêt (USB Generic). Débranchez la carte, rebranchez-la, puis relancez le flash.',
   'r36s-flash-write-failed': 'Échec de l’écriture de l’image sur la carte SD. Vérifiez le lecteur, le câble USB et réessayez.',
   'r36s-flash-gpt-failed': 'Image écrite mais la correction GPT a échoué. Réessayez le flash ; si le problème persiste, testez une autre carte SD ou lecteur.',
   'r36s-flash-format-failed': 'Le formatage FAT32 de TELMI a échoué. Fermez l’Explorateur sur cette carte, quittez antivirus/apps qui y accèdent, puis réessayez l’extension P3.',

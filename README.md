@@ -44,7 +44,7 @@ npm start
 npm run build
 ```
 
-Sortie : `electron/dist/Telmi Sync R36 Setup 0.18.5.exe`  
+Sortie : `electron/dist/Telmi Sync R36 Setup 0.18.10.exe`  
 Publier l’installateur en **GitHub Release** (ne pas committer `electron/dist` ni un dossier `release/`).
 
 ## Ressources R36S embarquées

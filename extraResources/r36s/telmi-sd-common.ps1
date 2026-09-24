@@ -14,6 +14,9 @@ public static class TelmiDiskIO {
     public const uint FILE_FLAG_WRITE_THROUGH = 0x80000000;
     public const uint FSCTL_LOCK_VOLUME = 0x00090018;
     public const uint FSCTL_DISMOUNT_VOLUME = 0x00090020;
+    public const uint FSCTL_ALLOW_EXTENDED_DASD_IO = 0x00090083;
+    public const uint IOCTL_DISK_UPDATE_PROPERTIES = 0x00070140;
+    public const uint IOCTL_VOLUME_OFFLINE = 0x0056c00c;
     public static readonly IntPtr INVALID = new IntPtr(-1);
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
@@ -49,16 +52,46 @@ public static class TelmiDiskIO {
         if (h != INVALID) CloseHandle(h);
     }
 
+    public static void LockAndDismountPath(string devicePath) {
+        IntPtr h = LockVolumePath(devicePath);
+        if (h != INVALID) CloseHandle(h);
+    }
+
     // Garde le handle ouvert : le verrou tient jusqu a CloseHandle (critique pendant le dd)
     public static IntPtr LockVolumeLetter(char letter) {
-        string path = "\\\\.\\" + letter + ":";
-        IntPtr h = CreateFile(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        return LockVolumePath("\\\\.\\" + letter + ":");
+    }
+
+    // Accepte \\\\.\\E: ou \\\\?\\Volume{guid}\\ (volumes sans lettre)
+    public static IntPtr LockVolumePath(string devicePath) {
+        if (string.IsNullOrEmpty(devicePath)) return INVALID;
+        string p = devicePath.Trim();
+        if (p.StartsWith("\\\\?\\")) p = "\\\\.\\" + p.Substring(4);
+        if (p.IndexOf("Volume{", StringComparison.OrdinalIgnoreCase) >= 0)
+            p = p.TrimEnd('\\');
+        IntPtr h = CreateFile(p, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
             IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
         if (h == INVALID) return INVALID;
         uint br;
         DeviceIoControl(h, FSCTL_LOCK_VOLUME, IntPtr.Zero, 0, IntPtr.Zero, 0, out br, IntPtr.Zero);
         DeviceIoControl(h, FSCTL_DISMOUNT_VOLUME, IntPtr.Zero, 0, IntPtr.Zero, 0, out br, IntPtr.Zero);
+        DeviceIoControl(h, IOCTL_VOLUME_OFFLINE, IntPtr.Zero, 0, IntPtr.Zero, 0, out br, IntPtr.Zero);
         return h;
+    }
+
+    public static IntPtr OpenPhysicalDrive(int diskNumber) {
+        string path = "\\\\.\\PhysicalDrive" + diskNumber.ToString();
+        uint[] shares = new uint[] { FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SHARE_READ, 0 };
+        foreach (uint share in shares) {
+            IntPtr h = CreateFile(path, GENERIC_READ | GENERIC_WRITE, share,
+                IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
+            if (h != INVALID) {
+                uint br;
+                DeviceIoControl(h, FSCTL_ALLOW_EXTENDED_DASD_IO, IntPtr.Zero, 0, IntPtr.Zero, 0, out br, IntPtr.Zero);
+                return h;
+            }
+        }
+        return INVALID;
     }
 }
 '@
@@ -106,12 +139,29 @@ function Get-RemovableDisks {
     }
 }
 
-function Dismount-DiskVolumes([int]$num) {
+function Get-TelmiVolumeDevicePaths([int]$num) {
+    $map = @{}
     Get-Partition -DiskNumber $num -EA SilentlyContinue | ForEach-Object {
+        foreach ($ap in @($_.AccessPaths)) {
+            if (-not $ap) { continue }
+            $p = [string]$ap
+            if ($p -notmatch 'Volume\{') { continue }
+            $p = $p.TrimEnd('\')
+            if ($p.StartsWith('\\?\')) { $p = '\\.\' + $p.Substring(4) }
+            $map[$p] = $true
+        }
         if ($_.DriveLetter) {
-            $ch = [char]$_.DriveLetter
-            try { [TelmiDiskIO]::LockAndDismountLetter($ch) } catch {}
-            try { mountvol ("{0}:" -f $ch) /D 2>$null } catch {}
+            $map[('\\.\' + $_.DriveLetter + ':')] = $true
+        }
+    }
+    return @($map.Keys)
+}
+
+function Dismount-DiskVolumes([int]$num) {
+    foreach ($p in (Get-TelmiVolumeDevicePaths -num $num)) {
+        try { [TelmiDiskIO]::LockAndDismountPath($p) } catch {}
+        if ($p -match '\\\\\.\\([A-Za-z]):$') {
+            try { mountvol ('{0}:' -f $Matches[1]) /D 2>$null } catch {}
         }
     }
     Start-Sleep -Milliseconds 300
@@ -207,13 +257,12 @@ function Seed-TelmiContentTree {
     if ((Test-Path $sysJson) -and -not (Test-Path (Join-Path $DriveRoot 'system.json'))) {
         Copy-Item -Force $sysJson (Join-Path $DriveRoot 'system.json')
     }
-    if (-not (Test-Path (Join-Path $DriveRoot 'autorun.inf'))) {
-        Set-Content -Path (Join-Path $DriveRoot 'autorun.inf') -Encoding ASCII -Value @"
+    # Toujours reecrire : Telmi Sync compare ce label a GitHub DantSu (1.10.3)
+    Set-Content -Path (Join-Path $DriveRoot 'autorun.inf') -Encoding ASCII -Value @"
 [autorun]
 icon  = .tmp_update/res/sdcard.ico
-label = TelmiOS-v1.10.1
+label = TelmiOS-v1.10.3
 "@
-    }
     if ($ContentOnlyStub) {
         $stubRes = Join-Path $DriveRoot '.tmp_update\res'
         New-Item -ItemType Directory -Force -Path $stubRes | Out-Null
